@@ -31,7 +31,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (  # noqa: E402
-    CACHE, USER_AGENT, api_key, log, ok, roster_items, step, warn, write_json,
+    CACHE, USER_AGENT, api_key, log, ok, redact_url, roster_items, step, warn,
+    write_json,
 )
 
 # ---------------------------------------------------------------------
@@ -88,8 +89,9 @@ def head(url: str, timeout: int = 30):
 
 
 def redact(url: str) -> str:
-    return urllib.parse.re.sub(r"(API_KEY=)[^&]*", r"\1***", url) \
-        if hasattr(urllib.parse, "re") else url.split("API_KEY=")[0] + "API_KEY=***"
+    """Kept as a local alias; the implementation lives in common so every
+    script strips keys the same way."""
+    return redact_url(url, "***")
 
 
 def probe_agency_roster(key: str) -> dict:

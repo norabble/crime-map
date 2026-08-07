@@ -217,10 +217,22 @@ class Throttle:
 THROTTLE = Throttle(per_hour=900)
 
 
+def redact_url(url: str, mark: str = "REDACTED") -> str:
+    """Strip the API key out of a URL before it is shown or stored.
+
+    Anything that prints, logs or raises a URL must go through this. A
+    request URL carries the key as a query parameter, so an unredacted one
+    in an exception message ends up in terminal scrollback, CI logs and
+    any stack trace someone pastes into an issue - which is how a
+    build-time-only secret escapes into somewhere public.
+    """
+    return re.sub(r"([?&]API_KEY=)[^&]*", r"\1" + mark, url or "")
+
+
 def _cache_path(url: str, ext: str = ".bin") -> Path:
     """Cache filename keyed on the URL, with any API key stripped first
     so the same cache works across keys and no key lands on disk."""
-    scrubbed = re.sub(r"([?&]API_KEY=)[^&]*", r"\1REDACTED", url)
+    scrubbed = redact_url(url)
     h = hashlib.sha256(scrubbed.encode()).hexdigest()[:20]
     tail = re.sub(r"[^A-Za-z0-9._-]+", "_", scrubbed.split("/")[-1])[:60]
     return RAW / (tail + "." + h + ext)
@@ -279,7 +291,7 @@ def fetch(url, cache=True, tries=5, timeout=60, throttle=True,
                 time.sleep(delay)
                 delay = min(delay * 2, 60)
                 continue
-            raise RuntimeError("network failure for %s: %s" % (url, e))
+            raise RuntimeError("network failure for %s: %s" % (redact_url(url), e))
 
     return None
 
