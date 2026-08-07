@@ -1,0 +1,18 @@
+# Generated data - rebuild with `make data`
+data/*.json
+
+# Serve-time symlink into data/, created by `make serve`
+viewer/data
+
+# Download cache (can be large; safe to delete)
+.cache/
+
+# Secrets
+.env
+
+__pycache__/
+*.pyc
+.DS_Store
+
+# Machine-local Claude Code settings
+.claude/settings.local.json

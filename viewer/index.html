@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US Crime Rates per Capita — 3D Geographic Explorer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<style>
+  :root{
+    --bg:#07090f;
+    --panel:rgba(15,19,30,.92);
+    --panel-solid:#0f131e;
+    --border:#242c40;
+    --text:#e8ecf5;
+    --muted:#8d97ad;
+    --accent:#f6c453;
+    --accent2:#4aa8d8;
+    --warn:#e8734a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden}
+  #map{position:absolute;inset:0}
+  canvas{outline:none}
+
+  /* ---------- panels ---------- */
+  .panel{
+    position:absolute;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 10px 40px rgba(0,0,0,.55);z-index:5;
+  }
+  #controls{top:14px;left:14px;width:310px;max-height:calc(100% - 28px);overflow-y:auto;padding:16px}
+  #ranking{top:14px;right:14px;width:250px;max-height:calc(100% - 28px);overflow-y:auto;padding:14px 16px}
+  #legend{bottom:14px;left:14px;width:310px;padding:14px 16px}
+
+  h1{font-size:14px;margin:0 0 3px;letter-spacing:.2px;font-weight:650}
+  .sub{font-size:10.5px;color:var(--muted);line-height:1.45;margin:0 0 14px}
+  h2{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);
+     margin:0 0 7px;font-weight:600}
+  .grp{margin-bottom:16px}
+  .grp:last-child{margin-bottom:0}
+
+  select,button,input[type=file]{font-family:inherit}
+  select{
+    width:100%;background:#161c2b;color:var(--text);border:1px solid var(--border);
+    border-radius:6px;padding:8px 9px;font-size:12.5px;cursor:pointer;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238d97ad'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  select:focus{outline:none;border-color:var(--accent2)}
+  select:disabled{opacity:.45;cursor:not-allowed}
+
+  .seg{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
+  .seg button{
+    background:#161c2b;color:var(--muted);border:1px solid var(--border);border-radius:6px;
+    padding:7px 4px;font-size:11px;cursor:pointer;transition:.13s;position:relative;
+  }
+  .seg button:hover:not(:disabled){background:#1c2437;color:var(--text);border-color:#3d4a66}
+  .seg button.on{background:var(--accent2);border-color:var(--accent2);color:#04121c;font-weight:600}
+  .seg button:disabled{opacity:.34;cursor:not-allowed}
+
+  .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .row .val{font-size:11.5px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:600}
+  input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:3px;
+    background:#2a3348;border-radius:2px;outline:none;margin:2px 0 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid #0f131e}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid #0f131e}
+
+  .swatch{height:9px;border-radius:3px;margin:5px 0 4px;background:#2a3348}
+  .now{font-size:9.5px;color:#6f798f;margin-top:4px;font-variant-numeric:tabular-nums}
+
+  /* era marker under the year slider */
+  .eraBar{position:relative;height:3px;background:#1b2233;border-radius:2px;margin:7px 0 3px}
+  .eraBar span{position:absolute;top:-3px;width:1px;height:9px;background:var(--warn);
+    box-shadow:0 0 5px var(--warn)}
+  .eraLbl{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  #eraSplit{color:var(--warn)}
+
+  /* api key block */
+  input[type=password],input[type=text].key{
+    width:100%;background:#161c2b;color:var(--text);border:1px solid var(--border);
+    border-radius:6px;padding:7px 9px;font-size:11.5px;font-family:inherit}
+  input[type=password]:focus,input[type=text].key:focus{outline:none;border-color:var(--accent2)}
+  .btn{width:100%;background:var(--accent2);color:#04121c;border:none;border-radius:6px;
+    padding:8px;font-size:11.5px;font-weight:650;cursor:pointer;margin-top:6px}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.sec{background:#1c2437;color:var(--muted);border:1px solid var(--border);font-weight:500}
+  .prog{height:3px;background:#1b2233;border-radius:2px;overflow:hidden;margin-top:8px}
+  .prog i{display:block;height:100%;background:var(--accent2);width:0;transition:width .2s}
+  .ok{color:#5fd39a}
+  .ends{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .bars{display:flex;align-items:flex-end;gap:3px;height:26px;margin:6px 0 4px}
+  .bars i{flex:1;background:linear-gradient(180deg,var(--accent2),#1d4a66);border-radius:1px 1px 0 0;display:block}
+
+  /* ranking list */
+  .rk{display:flex;align-items:center;gap:7px;padding:3.5px 0;font-size:11px;cursor:pointer;border-radius:4px}
+  .rk:hover{background:#1a2133}
+  .rk .n{width:15px;color:var(--muted);font-size:9.5px;text-align:right;flex:none}
+  .rk .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rk .v{font-variant-numeric:tabular-nums;color:var(--accent);font-size:10.5px;flex:none}
+
+  details{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+  summary{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);
+    cursor:pointer;font-weight:600;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary:before{content:"▸ ";display:inline-block;transition:.15s}
+  details[open] summary:before{transform:rotate(90deg)}
+  details p{font-size:10.5px;color:var(--muted);line-height:1.55;margin:9px 0 0}
+  details a{color:var(--accent2)}
+  .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:7px}
+  .note strong{color:var(--warn);font-weight:600}
+
+  /* tooltip */
+  .tip{
+    position:absolute;z-index:20;pointer-events:none;background:#0d111b;
+    border:1px solid var(--border);border-radius:8px;padding:11px 13px;font-size:11.5px;
+    box-shadow:0 8px 30px rgba(0,0,0,.7);max-width:250px;display:none;line-height:1.5
+  }
+  .tip .t{font-size:13px;font-weight:650;margin-bottom:7px}
+  .tip .l{display:flex;justify-content:space-between;gap:14px;color:var(--muted)}
+  .tip .l b{color:var(--text);font-variant-numeric:tabular-nums;font-weight:600}
+  .tip .hr{height:1px;background:var(--border);margin:7px 0}
+
+  /* loading / error */
+  #splash{position:absolute;inset:0;z-index:50;background:var(--bg);display:flex;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;transition:opacity .4s}
+  #splash.hide{opacity:0;pointer-events:none}
+  .spin{width:26px;height:26px;border:2px solid #232b3e;border-top-color:var(--accent);
+    border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #splashMsg{font-size:12px;color:var(--muted)}
+  #splashErr{max-width:460px;text-align:center;font-size:12px;line-height:1.6;color:var(--warn);display:none}
+
+  @media (max-width:900px){
+    #ranking{display:none}
+    #controls{width:270px}
+    #legend{width:270px}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="tip" id="tip"></div>
+
+<!-- ───────────── CONTROLS ───────────── -->
+<div class="panel" id="controls">
+  <h1>Crime Rates per Capita</h1>
+  <p class="sub">Extruded height = reported offenses per 100,000 residents.
+     Surface colour = population density. FBI Uniform Crime Reports.</p>
+
+  <div class="grp">
+    <h2>Geographic area</h2>
+    <div class="seg" id="geoSeg">
+      <button data-geo="state" class="on">State</button>
+      <button data-geo="county" disabled title="No public nationwide county dataset with this offence breakdown — see Data notes">County</button>
+      <button data-geo="zip" disabled title="ZIP-level crime data does not exist nationally — see Data notes">ZIP code</button>
+      <button data-geo="tract" disabled title="Census-tract crime data does not exist nationally — see Data notes">Census tract</button>
+    </div>
+    <div class="note">Only <strong>State</strong> has a real nationwide source. See <em>Data notes</em> below.</div>
+  </div>
+
+  <div class="grp">
+    <h2>Crime type</h2>
+    <select id="crime"></select>
+  </div>
+
+  <div class="grp">
+    <div class="row"><h2 style="margin:0">Year</h2><span class="val" id="yearVal">2019</span></div>
+    <input type="range" id="year" min="1960" max="2019" value="2019" step="1" />
+    <div class="eraBar"><span id="eraMark"></span></div>
+    <div class="eraLbl">
+      <span>1960</span>
+      <span id="eraSplit">SRS ▏NIBRS</span>
+      <span id="eraEnd">2019</span>
+    </div>
+    <div class="note" id="eraWarn" style="display:none"></div>
+  </div>
+
+
+  <div class="grp">
+    <div class="row"><h2 style="margin:0">Height exaggeration</h2><span class="val" id="exagVal">1.0×</span></div>
+    <input type="range" id="exag" min="0.15" max="3" value="1" step="0.05" />
+  </div>
+
+  <div class="grp">
+    <h2>Height shows</h2>
+    <div class="seg">
+      <button id="encRate" class="on" title="Pillar height is the crime rate; colour is population density">Crime rate</button>
+      <button id="encDens" title="Pillar height is population density; colour is the crime rate">Density</button>
+    </div>
+    <div class="note" id="encNote"></div>
+  </div>
+
+  <div class="grp">
+    <h2>Crime rate scale</h2>
+    <div class="seg">
+      <button id="scNorm" class="on" title="Full scale = the highest rate this crime type ever reaches, in any unit, in any year">Per crime type</button>
+      <button id="scAbs" title="Full scale = the highest rate any crime type reaches — lets you compare magnitudes, but rare crimes look flat">Absolute</button>
+    </div>
+    <div class="note">Both are fixed across all years, so the year slider shows real change.</div>
+  </div>
+
+  <div class="grp">
+    <h2>Density colours</h2>
+    <select id="palette"></select>
+    <div class="note" id="paletteNote"></div>
+  </div>
+
+  <details>
+    <summary>Data notes &amp; caveats</summary>
+    <p><b>Sources.</b> <em>1960–2019:</em> FBI Summary Reporting System state totals via the
+       <a href="https://corgis-edu.github.io/corgis/csv/state_crime/" target="_blank" rel="noopener">CORGIS
+       State Crime dataset</a>. <em>2020 onward:</em> pulled live from the
+       <a href="https://cde.ucr.cjis.gov/" target="_blank" rel="noopener">FBI Crime Data Explorer</a>
+       API. Rates are reported offences per 100,000 residents.</p>
+    <p><b>The 2019/2020 seam is real.</b> The two eras are different collection systems
+       (SRS vs NIBRS). Monthly CDE counts are summed to annual totals and divided by that
+       year's population; years without all 12 months reported are omitted entirely rather
+       than shown as a partial-year collapse. Treat cross-boundary comparisons with care.</p>
+    <p><b>Reporting coverage.</b> NIBRS adoption caused a sharp drop in participating
+       agencies — nationally about 75–79% of the population was covered in 2021, against
+       ~96% by 2023. States below 80% coverage are drawn de-saturated and semi-transparent,
+       with the exact figure on hover. A short pillar in those years may mean under-reporting
+       rather than less crime.</p>
+    <p><b>County view.</b> Built by summing the counts individual police agencies reported,
+       from <a href="https://www.openicpsr.org/openicpsr/project/100707" target="_blank" rel="noopener">UCR
+       Offenses Known and Clearances by Arrest (Return A)</a>, 1960–2024. That construction
+       carries real hazards, which is why each county-year shows the share of its population
+       that actually reported: city police and county sheriffs operate in the same county;
+       an agency that reported nothing looks identical to one with no crime; and agencies
+       that straddle county lines or serve no single county — state police, multi-county
+       districts — are excluded entirely. See
+       <a href="https://ucrbook.com/county-level-data.html" target="_blank" rel="noopener">Kaplan
+       on county-level data</a> before drawing conclusions from a single county.</p>
+    <p><b>What the county layer excludes.</b> An agency-year without all twelve months
+       reported is dropped rather than summed, because a part-year total renders as a crash
+       that never happened. Across 1960–2024 that removes about 337,000 agency-years.
+       Aggravated assault is the aggravated count only — the Return A "total" column bundles
+       simple assault, which is roughly ten times larger.</p>
+    <p><b>Why not ZIP or census tract?</b> ZIP and census-tract selectors are disabled
+       because no public nationwide dataset carries this offence breakdown at those levels —
+       they are published city-by-city, never nationally.</p>
+    <p><b>Rape definition change.</b> The UCR revised its rape definition in 2013. Figures
+       before and after that year are not directly comparable.</p>
+    <p><b>Voluntary reporting.</b> Agencies report to the UCR voluntarily. Coverage varies
+       by state and year, and a low number can mean low crime <em>or</em> low reporting.
+       Earlier years are considerably less complete.</p>
+    <p><b>Population density</b> is computed from each state's true spherical land+water
+       polygon area, so it will differ slightly from Census land-only density figures.</p>
+  </details>
+</div>
+
+<!-- ───────────── RANKING ───────────── -->
+<div class="panel" id="ranking">
+  <h2 id="rkTitle">Highest rates</h2>
+  <div id="rkList"></div>
+</div>
+
+<!-- ───────────── LEGEND ───────────── -->
+<div class="panel" id="legend">
+  <h2 id="lgHtitle">Height — <span id="lgCrime">violent crime</span> per 100k</h2>
+  <div class="bars" id="lgBars"></div>
+  <div class="ends"><span id="lgHmin">0</span><span id="lgHmax">—</span></div>
+  <div class="now" id="lgHnow">—</div>
+  <h2 style="margin-top:13px" id="lgCtitle">Colour — population per sq mile</h2>
+  <div class="swatch" id="lgSwatch"></div>
+  <div class="ends"><span id="lgCmin">—</span><span id="lgCmax">—</span></div>
+  <div class="now" id="lgFixed">Fixed across all years</div>
+</div>
+
+<!-- ───────────── SPLASH ───────────── -->
+<div id="splash">
+  <div class="spin" id="spinner"></div>
+  <div id="splashMsg">Loading libraries…</div>
+  <div id="splashErr"></div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   Crime Rates per Capita — 3D extruded choropleth
+   Height : offences per 100,000 residents (selected crime type/year)
+   Colour : population density (people per square mile, log scale)
+   ══════════════════════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+const splashMsg = $('splashMsg');
+
+/* ---------- CDN loading with fallbacks ---------------------------- */
+function loadScript(urls){
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    (function next(){
+      if (i >= urls.length) return reject(new Error('All CDNs failed for: ' + urls[0]));
+      const s = document.createElement('script');
+      s.src = urls[i++];
+      s.onload = resolve;
+      s.onerror = next;
+      document.head.appendChild(s);
+    })();
+  });
+}
+const cdn = (path) => ([
+  'https://cdn.jsdelivr.net/npm/' + path,
+  'https://unpkg.com/' + path
+]);
+
+/* ---------- local build artefacts --------------------------------- */
+/* Reads one JSON file produced by the build scripts. Never touches the
+   API, so no key and no rate limit. `optional` files — the county layer —
+   resolve to null when absent rather than failing the whole boot. */
+async function loadLocal(url, optional = false){
+  let res;
+  try {
+    res = await fetch(url, {cache: 'no-cache'});
+  } catch (err){
+    if (optional) return null;
+    throw new Error('Could not reach ' + url + ' (' + err.message + ')');
+  }
+  if (!res.ok){
+    if (optional) return null;
+    throw new Error('HTTP ' + res.status + ' for ' + url);
+  }
+  try {
+    return await res.json();
+  } catch (err){
+    if (optional) return null;
+    throw new Error(url + ' is not valid JSON — rebuild with: make data');
+  }
+}
+
+/* ---------- crime type definitions -------------------------------- */
+/* Keys map onto CORGIS column names. `rate` is already per 100,000. */
+const CRIMES = [
+  {id:'violent',   label:'Violent crime — all',                rate:'Data.Rates.Violent.All',       total:'Data.Totals.Violent.All',       cde:'violent-crime'},
+  {id:'property',  label:'Property crime — all (non-violent)', rate:'Data.Rates.Property.All',      total:'Data.Totals.Property.All',      cde:'property-crime'},
+  {id:'murder',    label:'Homicide',                           rate:'Data.Rates.Violent.Murder',    total:'Data.Totals.Violent.Murder',    cde:'homicide'},
+  {id:'rape',      label:'Rape',                               rate:'Data.Rates.Violent.Rape',      total:'Data.Totals.Violent.Rape',      cde:'rape'},
+  {id:'robbery',   label:'Robbery',                            rate:'Data.Rates.Violent.Robbery',   total:'Data.Totals.Violent.Robbery',   cde:'robbery'},
+  {id:'assault',   label:'Aggravated assault',                 rate:'Data.Rates.Violent.Assault',   total:'Data.Totals.Violent.Assault',   cde:'aggravated-assault'},
+  {id:'burglary',  label:'Burglary',                           rate:'Data.Rates.Property.Burglary', total:'Data.Totals.Property.Burglary', cde:'burglary'},
+  {id:'larceny',   label:'Theft (larceny)',                    rate:'Data.Rates.Property.Larceny',  total:'Data.Totals.Property.Larceny',  cde:'larceny'},
+  {id:'motor',     label:'Motor vehicle theft',                rate:'Data.Rates.Property.Motor',    total:'Data.Totals.Property.Motor',    cde:'motor-vehicle-theft'}
+];
+
+
+const SRS_LAST = 2019;          // last year of Summary Reporting System data
+const NIBRS_FIRST = 2020;       // first year pulled from the CDE API
+const COVERAGE_MIN = 80;        // below this %, a state-year is flagged unreliable
+
+
+
+/* ---------- density colour ramps ---------------------------------- */
+const PALETTES = {
+  greenred: {
+    label: 'Green → red',
+    safe: false,
+    // Luminance falls monotonically (234→189→177→137→63) so the ramp reads
+    // as an ordered sequence. A pure yellow midpoint would be brighter than
+    // the green before it and break that ordering.
+    stops: [[220,243,186],[158,206,110],[214,176,74],[226,120,48],[198,26,26]]
+  },
+  magma: {
+    label: 'Magma — colour-blind safe',
+    safe: true,
+    stops: [[13,8,66],[86,25,120],[174,48,108],[237,104,60],[252,204,102]]
+  },
+  viridis: {
+    label: 'Viridis — colour-blind safe',
+    safe: true,
+    stops: [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]]
+  },
+  // Single-hue ramps. Only lightness and saturation vary, so the ordering
+  // survives every form of colour vision deficiency — there is no hue
+  // pair left to confuse. Luminance falls 82 -> 7 and saturation reaches
+  // 100% at the top end.
+  reds: {
+    label: 'Red — single hue',
+    safe: true,
+    note: 'One hue, so the order survives any colour vision deficiency. ' +
+          'Saturation is full at the high end.',
+    stops: [[254,229,217],[252,174,145],[251,106,74],[222,45,38],[153,0,13]]
+  },
+  blues: {
+    label: 'Blue — single hue',
+    safe: true,
+    note: 'One hue, so the order survives any colour vision deficiency.',
+    stops: [[222,235,247],[158,202,225],[107,174,214],[49,130,189],[8,69,148]]
+  },
+  cividis: {
+    label: 'Cividis — colour-blind safe',
+    safe: true,
+    note: 'Designed so that people with and without colour vision ' +
+          'deficiency read the same ordering.',
+    stops: [[0,32,76],[62,74,110],[123,120,116],[190,172,105],[255,233,69]]
+  }
+};
+
+function rampColor(t, stops){
+  t = Math.max(0, Math.min(1, t));
+  const x = t * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  const f = x - i, a = stops[i], b = stops[i+1];
+  return [
+    Math.round(a[0] + (b[0]-a[0])*f),
+    Math.round(a[1] + (b[1]-a[1])*f),
+    Math.round(a[2] + (b[2]-a[2])*f)
+  ];
+}
+
+function cssGradient(stops){
+  return 'linear-gradient(90deg,' +
+    stops.map((c,i) => 'rgb(' + c.join(',') + ') ' +
+      Math.round(i / (stops.length - 1) * 100) + '%').join(',') + ')';
+}
+
+
+
+/* ---------- state ------------------------------------------------- */
+const S = {
+  crime: 'violent',
+  year: 2019,
+  exag: 1,
+  normalize: true,
+  // false: height = crime rate, colour = density (the default reading)
+  // true:  the two channels swap
+  swap: false,
+  palette: 'greenred',
+  geo: 'state',          // 'state' | 'county'
+  meta: {},
+  hasCounties: false,
+  countyData: null,      // fips -> year -> record
+  countyFeatures: [],
+  features: [],          // GeoJSON features, each with .props (joined data)
+  /* Unified store, both eras merged:
+       data: stateName -> year -> { pop, cov, src, rates:{crimeId:rate} }
+     SRS years arrive complete; NIBRS years fill in per crime type as
+     each one is fetched, so `rates` may be sparse for 2020+.        */
+  data: new Map,
+  years: [],             // every year currently selectable
+  nibrsYears: [],        // complete NIBRS years discovered from the API
+  crimeMax: {},          // crime id -> max rate across ALL states and ALL years
+  densMin: 0,            // min density across ALL states and ALL years
+  densMax: 1,            // max density across ALL states and ALL years
+  deck: null, map: null
+};
+
+/* Absolute-scale reference: highest single rate seen in the dataset,
+   used so "Absolute" mode is comparable across crime types.          */
+let ABS_MAX = 1;
+const MAX_HEIGHT_M = 420000;   // metres at exaggeration 1.0
+
+/* ══════════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════════ */
+/* `stage` tracks how far boot got. Every step below runs inside one try,
+   so without it a CDN failure, a missing data file and a WebGL failure all
+   surface as the same message — which sends you looking at the data when
+   the problem is elsewhere. */
+let bootStage = 'libraries';
+(async function boot(){
+  try{
+    splashMsg.textContent = 'Loading libraries…';
+    await loadScript(cdn('maplibre-gl@4.7.1/dist/maplibre-gl.js'));
+    await loadScript(cdn('deck.gl@9.0.27/dist.min.js'));
+
+    // Everything below is served from ../data/, produced by the build
+    // scripts. No API key, no rate limits, works offline once built.
+    bootStage = 'crime data';
+    splashMsg.textContent = 'Loading crime data…';
+    const states = await loadLocal('../data/states.json');
+
+    bootStage = 'geometry';
+    splashMsg.textContent = 'Loading geometry…';
+    const geo = await loadLocal('../data/geo-states.json');
+
+    bootStage = 'joining datasets';
+    splashMsg.textContent = 'Joining datasets…';
+    buildData(states, geo);
+
+    // The county layer is optional — the build may legitimately not
+    // have it, so a missing file must not fail the whole boot.
+    try {
+      const [cGeo, cData] = await Promise.all([
+        loadLocal('../data/geo-counties.json', true),
+        loadLocal('../data/counties.json', true)
+      ]);
+      if (cGeo && cData) { buildCounties(cGeo, cData); }
+    } catch(e){ console.warn('county layer unavailable:', e.message); }
+
+
+    bootStage = 'rendering';
+    splashMsg.textContent = 'Rendering…';
+    initUI();
+    initMap();
+  } catch (err){
+    console.error('boot failed during stage:', bootStage, err);
+    $('spinner').style.display = 'none';
+    splashMsg.style.display = 'none';
+    const e = $('splashErr');
+    e.style.display = 'block';
+    const isFileProto = location.protocol === 'file:';
+
+    // Advice is per-stage: pointing at the data files is actively
+    // misleading when the failure was a blocked CDN or a WebGL problem.
+    let hint;
+    if (isFileProto){
+      hint = '<br><br>You opened this with <code>file://</code>. Browsers block ' +
+             'local file reads from that origin. Serve the folder instead:' +
+             '<br><br><code style="color:#f6c453">make serve</code>' +
+             '<br>then open <code>http://localhost:8000</code>';
+    } else if (bootStage === 'libraries'){
+      hint = '<br><br>The map libraries are loaded from a CDN, so this step ' +
+             'needs internet access even though the data is local. Check your ' +
+             'connection, or any blocker that might stop ' +
+             '<code>jsdelivr.net</code> / <code>unpkg.com</code>.';
+    } else if (bootStage === 'crime data' || bootStage === 'geometry'){
+      hint = '<br><br>Check that <code>data/states.json</code> and ' +
+             '<code>data/geo-states.json</code> exist. If not, run:' +
+             '<br><br><code style="color:#f6c453">make data</code>';
+    } else if (bootStage === 'rendering'){
+      hint = '<br><br>The data loaded fine — this is a rendering failure. ' +
+             'It usually means WebGL is unavailable or disabled in this ' +
+             'browser. Check <code>about:gpu</code>, or try another browser.';
+    } else {
+      hint = '<br><br>The files loaded but could not be combined. Rebuild with:' +
+             '<br><br><code style="color:#f6c453">make data</code>';
+    }
+
+    e.innerHTML = '<b>Could not load.</b><br><br>' +
+      '<span style="opacity:.7">Failed while loading: ' + bootStage + '</span><br><br>' +
+      String(err.message || err) + hint;
+  }
+})();
+
+/* ══════════════════════════════════════════════════════════════════
+   DATA
+   ══════════════════════════════════════════════════════════════════ */
+/* Consume data/states.json + data/geo-states.json, both produced by the
+   build scripts. Areas are precomputed there, so nothing is recalculated
+   at load time. */
+function buildData(statesDoc, geoDoc){
+  if (!statesDoc || !statesDoc.states){
+    throw new Error('data/states.json is malformed — rebuild with: make data');
+  }
+  S.meta = statesDoc.meta || {};
+
+  const yearSet = new Set();
+  for (const name in statesDoc.states){
+    const byYear = new Map();
+    const src = statesDoc.states[name];
+    for (const ys in src){
+      const yr = +ys;
+      if (!isFinite(yr)) continue;
+      const rec = src[ys];
+      byYear.set(yr, {
+        pop: rec.pop,
+        cov: (rec.cov === undefined ? null : rec.cov),
+        src: rec.src || 'SRS',
+        rates: rec.rates || {},
+        totals: rec.totals || {}
+      });
+      yearSet.add(yr);
+    }
+    S.data.set(name, byYear);
+  }
+  S.years = [...yearSet].sort((a,b) => a-b);
+  if (!S.years.length) throw new Error('states.json contains no usable years.');
+  S.nibrsYears = (S.meta.nibrsYears || []).slice();
+
+  /* --- geometry --------------------------------------------------- */
+  let matched = 0, missingGeo = [];
+  S.features = [];
+  for (const name in geoDoc){
+    const g = geoDoc[name];
+    if (!S.data.has(name)){ continue; }
+    matched++;
+    S.features.push({
+      type: 'Feature',
+      geometry: g.geometry,
+      props: { name, areaSqMi: g.area_sq_mi, fips: g.fips }
+    });
+  }
+  for (const name of S.data.keys()){
+    if (!(name in geoDoc)) missingGeo.push(name);
+  }
+  if (missingGeo.length){
+    console.warn('no geometry for: ' + missingGeo.join(', '));
+  }
+  if (matched < 40){
+    throw new Error('Only ' + matched + ' states joined between geometry and crime data — expected ~51.');
+  }
+
+  recomputeScales();
+  console.log('Joined ' + matched + ' states; years ' +
+    S.years[0] + '–' + S.years[S.years.length-1] +
+    '; density ' + S.densMin.toFixed(2) + '–' + S.densMax.toFixed(0) + ' /sq mi');
+}
+
+/* Optional county layer. Stored parallel to the state layer so the
+   geography selector can swap between them without a reload. */
+function buildCounties(geoDoc, dataDoc){
+  const counties = (dataDoc && dataDoc.counties) || {};
+  if (!Object.keys(counties).length) return;
+
+  S.countyData = new Map();
+  S.countyFeatures = [];
+  let matched = 0;
+
+  /* Two encodings are accepted. The national import writes "compact-1" —
+     one flat array per county-year, [pop, cov, ...totals in
+     meta.crimeOrder] — because the verbose object form costs ~360 bytes
+     a record, and 3,135 counties x 65 years of that is 74 MB of JSON for
+     a browser to parse. The per-state API build still writes objects. */
+  const meta = (dataDoc && dataDoc.meta) || {};
+  const compact = meta.format === 'compact-1';
+  const order = meta.crimeOrder || [];
+
+  const decode = (rec, year) => {
+    if (!compact) {
+      return {
+        pop: rec.pop,
+        cov: (rec.cov === undefined ? null : rec.cov),
+        src: rec.src || 'NIBRS',
+        rates: rec.rates || {},
+        totals: rec.totals || {},
+        agencies: rec.agencies,
+        reporting: rec.reporting
+      };
+    }
+    const pop = rec[0], cov = rec[1];
+    const totals = {}, rates = {};
+    for (let i = 0; i < order.length; i++){
+      const v = rec[2 + i];
+      if (v === undefined || v === null) continue;
+      totals[order[i]] = v;
+      // Rates are derived here rather than stored: they are the larger
+      // of the two numbers and reconstructing them costs nothing.
+      if (pop > 0) rates[order[i]] = v / pop * 100000;
+    }
+    return {
+      pop, cov: (cov === undefined ? null : cov),
+      // Return A spans both collection systems; the seam is the same one
+      // the state layer marks at 2019/2020.
+      src: year > SRS_LAST ? 'NIBRS' : 'SRS',
+      rates, totals
+    };
+  };
+
+  for (const fips in counties){
+    const g = geoDoc[fips];
+    if (!g) continue;
+    const byYear = new Map();
+    for (const ys in counties[fips]){
+      byYear.set(+ys, decode(counties[fips][ys], +ys));
+    }
+    S.countyData.set(fips, byYear);
+    S.countyFeatures.push({
+      type: 'Feature',
+      geometry: g.geometry,
+      props: {
+        name: g.name + (g.name.match(/(County|Parish|Borough|city|Area)$/) ? '' : ' County'),
+        areaSqMi: g.area_sq_mi,
+        fips
+      }
+    });
+    matched++;
+  }
+
+  S.hasCounties = matched > 0;
+  if (S.hasCounties){
+    const btn = document.querySelector('#geoSeg button[data-geo="county"]');
+    if (btn){
+      btn.disabled = false;
+      btn.title = matched + ' counties loaded from data/counties.json';
+    }
+    console.log('County layer: ' + matched + ' counties');
+  }
+}
+
+
+/* --- fixed global scales -----------------------------------------
+   Both channels are normalised across every state AND every year, so
+   moving the year slider shows genuine change rather than re-scaling
+   underneath you. Re-run whenever new NIBRS years are merged in.   */
+/* Active layer helpers — everything downstream reads through these so
+   the state and county layers share one render path. */
+function activeFeatures(){
+  return S.geo === 'county' && S.hasCounties ? S.countyFeatures : S.features;
+}
+function activeStore(){
+  return S.geo === 'county' && S.hasCounties ? S.countyData : S.data;
+}
+function featureKey(f){
+  return S.geo === 'county' && S.hasCounties ? f.props.fips : f.props.name;
+}
+
+function recomputeScales(){
+  for (const c of CRIMES) S.crimeMax[c.id] = 0;
+  S.densMin = Infinity;
+  S.densMax = 0;
+  ABS_MAX = 0;
+
+  const feats = activeFeatures(), store = activeStore();
+  for (const f of feats){
+    const byYear = store.get(featureKey(f));
+    if (!byYear) continue;
+    for (const rec of byYear.values()){
+      // Agencies carry a precomputed county density; areas belong to
+      // polygons, and an agency is a point.
+      const d = isFinite(rec.dens) && rec.dens > 0
+        ? rec.dens
+        : ((isFinite(rec.pop) && rec.pop > 0 && f.props.areaSqMi > 0)
+            ? rec.pop / f.props.areaSqMi : NaN);
+      if (isFinite(d)){
+        if (d < S.densMin) S.densMin = d;
+        if (d > S.densMax) S.densMax = d;
+      }
+      for (const c of CRIMES){
+        const v = rec.rates[c.id];
+        if (!isFinite(v)) continue;
+        if (v > S.crimeMax[c.id]) S.crimeMax[c.id] = v;
+        if (v > ABS_MAX) ABS_MAX = v;
+      }
+    }
+  }
+  if (!isFinite(S.densMin)) S.densMin = 0;
+  if (S.densMax <= 0) S.densMax = 1;
+  for (const c of CRIMES) if (!S.crimeMax[c.id]) S.crimeMax[c.id] = 1;
+  if (ABS_MAX <= 0) ABS_MAX = 1;
+}
+
+/* Values for the current crime type + year. Scaling maxima are NOT
+   derived here — both channels use the fixed global ranges computed
+   in buildData(). maxRate is returned for reporting only.           */
+function currentValues(){
+  const def = CRIMES.find(c => c.id === S.crime);
+  const out = [];
+  let maxRate = 0;
+
+  const store = activeStore();
+  for (const f of activeFeatures()){
+    const byYear = store.get(featureKey(f));
+    const rec = byYear && byYear.get(S.year);
+    const rate = rec ? rec.rates[def.id] : NaN;
+    const total = rec ? rec.totals[def.id] : NaN;
+    const pop = rec ? rec.pop : NaN;
+    const dens = (rec && isFinite(rec.dens) && rec.dens > 0)
+      ? rec.dens
+      : ((isFinite(pop) && f.props.areaSqMi > 0) ? pop / f.props.areaSqMi : NaN);
+    const cov = rec ? rec.cov : null;
+    const src = rec ? rec.src : null;
+    const lowCov = (cov != null && cov < COVERAGE_MIN);
+
+    if (isFinite(rate) && rate > maxRate) maxRate = rate;
+    out.push({ f, rate, total, pop, dens, cov, src, lowCov });
+  }
+  return { def, rows: out, maxRate };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   MAP
+   ══════════════════════════════════════════════════════════════════ */
+function initMap(){
+  const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+
+  S.map = new maplibregl.Map({
+    container: 'map',
+    style: STYLE,
+    center: [-97.5, 36.5],
+    zoom: 3.4,
+    pitch: 52,
+    bearing: -12,
+    maxPitch: 80,
+    attributionControl: { compact: true }
+  });
+  S.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+  // If the basemap style fails, keep going with a plain dark backdrop.
+  S.map.on('error', e => console.warn('MapLibre:', e && e.error && e.error.message));
+
+  S.map.on('load', () => {
+    S.deck = new deck.MapboxOverlay({ interleaved: false, layers: [] });
+    S.map.addControl(S.deck);
+    render();
+    setTimeout(() => $('splash').classList.add('hide'), 250);
+  });
+}
+
+function render(){
+  if (!S.deck) return;
+  const { def, rows, maxRate } = currentValues();
+  const stops = PALETTES[S.palette].stops;
+
+  // Fixed colour domain: lowest-density state-year -> highest, all years.
+  const logMin = Math.log10(Math.max(0.5, S.densMin));
+  const logMax = Math.log10(Math.max(1, S.densMax));
+  const logSpan = Math.max(0.0001, logMax - logMin);
+
+  // Fixed height domain. "Relative" = tallest for this crime type across
+  // all years; "Absolute" = tallest of any crime type across all years.
+  const heightRef = S.normalize
+    ? Math.max(S.crimeMax[S.crime], 0.0001)
+    : ABS_MAX;
+
+  // Attach computed display values onto each feature for the layer accessors.
+  for (const r of rows){
+    r.f.props.rate = r.rate;
+    r.f.props.total = r.total;
+    r.f.props.pop = r.pop;
+    r.f.props.dens = r.dens;
+    r.f.props.cov = r.cov;
+    r.f.props.src = r.src;
+    r.f.props.lowCov = r.lowCov;
+    // Each measure is reduced to a 0..1 position inside its own fixed
+    // domain, so either can drive either channel. Density stays on a log
+    // scale in both roles: it spans four orders of magnitude, and linear
+    // height would leave every rural unit flat against Manhattan.
+    const tRate = isFinite(r.rate) ? Math.min(1, r.rate / heightRef) : NaN;
+    const tDens = isFinite(r.dens)
+      ? Math.min(1, Math.max(0, (Math.log10(Math.max(0.5, r.dens)) - logMin) / logSpan))
+      : NaN;
+
+    const tHeight = S.swap ? tDens : tRate;
+    const tColour = S.swap ? tRate : tDens;
+
+    r.f.props.elev = isFinite(tHeight) ? tHeight * MAX_HEIGHT_M * S.exag : 0;
+
+    let col = isFinite(tColour) ? rampColor(tColour, stops) : [55, 62, 80];
+
+    // Under-reported unit-years are pulled toward grey so an artificially
+    // low pillar is visibly untrustworthy rather than reading as real.
+    if (r.lowCov){
+      const g = 96;
+      col = [Math.round(col[0]*0.34 + g*0.66),
+             Math.round(col[1]*0.34 + g*0.66),
+             Math.round(col[2]*0.34 + g*0.66)];
+    }
+    r.f.props.color = col;
+    r.f.props.alpha = isFinite(tHeight) ? (r.lowCov ? 130 : 255) : 70;
+  }
+
+  const layer = new deck.GeoJsonLayer({
+    id: 'units-3d-' + S.geo,
+    data: { type: 'FeatureCollection', features: activeFeatures() },
+    extruded: true,
+    wireframe: true,
+    filled: true,
+    stroked: false,
+    getElevation: f => f.props.elev,
+    getFillColor: f => [f.props.color[0], f.props.color[1], f.props.color[2], f.props.alpha],
+    getLineColor: [255, 255, 255, 22],
+    lineWidthMinPixels: 1,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [246, 196, 83, 90],
+    material: { ambient: .55, diffuse: .65, shininess: 24, specularColor: [50,50,55] },
+    updateTriggers: {
+      getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap],
+      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap]
+    },
+    transitions: { getElevation: 260, getFillColor: 260 },
+    onHover: info => showTip(info)
+  });
+
+  S.deck.setProps({ layers: [layer] });
+  updateLegend(def, rows, heightRef, maxRate, stops);
+  updateRanking(def, rows);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   TOOLTIP
+   ══════════════════════════════════════════════════════════════════ */
+const tip = $('tip');
+function showTip(info){
+  if (!info || !info.object){ tip.style.display = 'none'; return; }
+  const p = info.object.props;
+  const def = CRIMES.find(c => c.id === S.crime);
+  tip.style.display = 'block';
+  tip.style.left = (info.x + 16) + 'px';
+  tip.style.top  = (info.y + 16) + 'px';
+  const covLine = p.cov == null ? '' :
+    '<div class="l"><span>Reporting coverage</span><b' +
+      (p.lowCov ? ' style="color:#e8734a"' : '') + '>' + fmt(p.cov, 1) + '%</b></div>';
+  const unit = S.geo === 'county' ? "this county's" : "this state's";
+  const warn = p.lowCov
+    ? '<div class="hr"></div><div style="color:#e8734a;font-size:10.5px;line-height:1.45">' +
+      'Only ' + fmt(p.cov, 0) + '% of ' + unit + ' population was covered by ' +
+      'reporting in ' + S.year +
+      '. The true rate is almost certainly higher.</div>'
+    : '';
+
+  const placeRows =
+    '<div class="l"><span>Population (' + S.year + ')</span><b>' + fmt(p.pop, 0) + '</b></div>' +
+    '<div class="l"><span>Density /sq mi</span><b>' + fmt(p.dens, 1) + '</b></div>' +
+    '<div class="l"><span>Area sq mi</span><b>' + fmt(p.areaSqMi, 0) + '</b></div>';
+
+  tip.innerHTML =
+    '<div class="t">' + p.name + '</div>' +
+    '<div class="l"><span>' + def.label + '</span><b>' + fmt(p.rate, 1) + '</b></div>' +
+    '<div class="l"><span>per 100,000 residents</span><b></b></div>' +
+    '<div class="hr"></div>' +
+    '<div class="l"><span>Reported offences</span><b>' + fmt(p.total, 0) + '</b></div>' +
+    placeRows +
+    '<div class="l"><span>Source</span><b>' + (p.src || '—') + '</b></div>' +
+    covLine + warn;
+}
+function fmt(v, d){
+  if (!isFinite(v)) return '—';
+  return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   LEGEND + RANKING
+   ══════════════════════════════════════════════════════════════════ */
+function updateLegend(def, rows, heightRef, maxRate, stops){
+  const rateLbl = def.label.toLowerCase() + ' per 100k';
+  const densLbl = 'population per sq mile';
+  const rateEnds = ['0', fmt(heightRef, 0) +
+    (S.normalize ? '  (peak, all yrs)' : '  (absolute, all crimes)')];
+  const densEnds = [fmt(S.densMin, 1), fmt(S.densMax, 0)];
+
+  // The two channels are interchangeable, so the legend follows whichever
+  // measure is currently driving each one. Leaving the headings fixed
+  // would silently mislabel the whole map.
+  $('lgHtitle').textContent = 'Height — ' + (S.swap ? densLbl : rateLbl);
+  $('lgCtitle').textContent = 'Colour — ' + (S.swap ? rateLbl : densLbl);
+  const hEnds = S.swap ? densEnds : rateEnds;
+  const cEnds = S.swap ? rateEnds : densEnds;
+  $('lgHmin').textContent = hEnds[0];
+  $('lgHmax').textContent = hEnds[1];
+  $('lgCmin').textContent = cEnds[0];
+  $('lgCmax').textContent = cEnds[1];
+  $('lgSwatch').style.background = cssGradient(stops);
+  $('lgFixed').textContent = S.swap
+    ? 'Density is log-scaled; both domains fixed across all years'
+    : 'Both domains fixed across all years';
+
+  // Where this year's highest unit sits inside the fixed rate domain —
+  // makes the year slider legible, since a low year reads as a low bar.
+  $('lgHnow').textContent = S.year + ' peak ' + def.label.toLowerCase() +
+    ': ' + fmt(maxRate, 0) +
+    ' (' + Math.round(maxRate / heightRef * 100) + '% of rate scale)';
+
+  // Distribution of this year's rates, binned against the FIXED domain.
+  // Always the rate, whichever channel is carrying it.
+  const vals = rows.map(r => r.rate).filter(isFinite);
+  const N = 22, bars = new Array(N).fill(0);
+  for (const v of vals){
+    let k = Math.floor(v / heightRef * N);
+    if (k >= N) k = N - 1;
+    if (k < 0) k = 0;
+    bars[k]++;
+  }
+  const bMax = Math.max(1, ...bars);
+  $('lgBars').innerHTML = bars
+    .map(b => '<i style="height:' + Math.max(2, (b / bMax) * 100) + '%"></i>')
+    .join('');
+}
+
+function updateRanking(def, rows){
+  const sorted = rows.filter(r => isFinite(r.rate)).sort((a,b) => b.rate - a.rate).slice(0, 12);
+  $('rkTitle').textContent = 'Highest — ' + def.label.toLowerCase();
+  $('rkList').innerHTML = sorted.map((r, i) =>
+    '<div class="rk" data-name="' + r.f.props.name + '">' +
+      '<span class="n">' + (i+1) + '</span>' +
+      '<span class="nm">' + r.f.props.name + '</span>' +
+      '<span class="v">' + fmt(r.rate, 0) + '</span>' +
+    '</div>'
+  ).join('');
+
+  // Click a row to fly to that state.
+  $('rkList').querySelectorAll('.rk').forEach(el => {
+    el.onclick = () => {
+      // Search the active layer, not the state list — in agency or county
+      // mode the clicked row is not a state and would never be found.
+      const f = activeFeatures().find(x => x.props.name === el.dataset.name);
+      if (!f) return;
+      const b = bbox(f);
+      // A point has no extent, so fitBounds on it would zoom to maximum.
+      const pad = (b[0] === b[2] && b[1] === b[3]) ? 0.25 : 0;
+      S.map.fitBounds([[b[0] - pad, b[1] - pad], [b[2] + pad, b[3] + pad]],
+                      { padding: 160, pitch: 55, duration: 900 });
+    };
+  });
+}
+
+/* Frame whatever the active layer actually covers. The state layer spans
+   the country, but an agency build scoped to one state occupies a corner
+   of it — at the national camera those columns are barely a pixel wide,
+   which reads as "the layer is broken" rather than "you are 2,000 miles
+   away from it". */
+function fitActiveLayer(){
+  const feats = activeFeatures();
+  if (!S.map || !feats.length) return;
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  for (const f of feats){
+    const b = bbox(f);
+    if (b[0] < minX) minX = b[0];
+    if (b[1] < minY) minY = b[1];
+    if (b[2] > maxX) maxX = b[2];
+    if (b[3] > maxY) maxY = b[3];
+  }
+  if (minX > maxX || minY > maxY) return;
+  S.map.fitBounds([[minX, minY], [maxX, maxY]],
+                  { padding: 120, pitch: 52, duration: 900 });
+}
+
+/* Which crime types the active layer actually holds. The dropdown lists
+   all nine, but a build scoped with --crimes carries only some: selecting
+   a missing one yields no rate, and a zero-height pillar reads as "no
+   crime here" when it means "not built". */
+function availableCrimes(){
+  const have = new Set();
+  const store = activeStore();
+  if (!store) return have;
+  for (const byYear of store.values()){
+    for (const rec of byYear.values()){
+      for (const c in rec.rates) if (isFinite(rec.rates[c])) have.add(c);
+    }
+  }
+  return have;
+}
+
+function syncCrimeOptions(){
+  const have = availableCrimes();
+  const sel = $('crime');
+  if (!sel) return;
+  sel.innerHTML = CRIMES.map(c => {
+    const ok = have.has(c.id);
+    return '<option value="' + c.id + '"' + (ok ? '' : ' disabled') + '>' +
+           c.label + (ok ? '' : ' — not in this layer') + '</option>';
+  }).join('');
+  if (!have.has(S.crime)){
+    const first = CRIMES.find(c => have.has(c.id));
+    if (first) S.crime = first.id;
+  }
+  sel.value = S.crime;
+}
+
+function bbox(f){
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  const walk = c => {
+    if (typeof c[0] === 'number'){
+      if (c[0] < minX) minX = c[0];
+      if (c[0] > maxX) maxX = c[0];
+      if (c[1] < minY) minY = c[1];
+      if (c[1] > maxY) maxY = c[1];
+    } else c.forEach(walk);
+  };
+  walk(f.geometry.coordinates);
+  return [minX, minY, maxX, maxY];
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   UI WIRING
+   ══════════════════════════════════════════════════════════════════ */
+/* ---------- year slider + era marker ------------------------------ */
+function syncYearSlider(jumpToEnd){
+  const y = $('year');
+  const lo = S.years[0], hi = S.years[S.years.length - 1];
+  y.min = lo; y.max = hi;
+  if (jumpToEnd || S.year > hi || S.year < lo) S.year = hi;
+  y.value = S.year;
+  $('yearVal').textContent = S.year;
+  $('eraEnd').textContent = hi;
+
+  // Position the SRS/NIBRS boundary marker proportionally.
+  const hasNibrs = hi > SRS_LAST;
+  $('eraSplit').style.display = hasNibrs ? '' : 'none';
+  const mark = $('eraMark');
+  if (hasNibrs){
+    const pct = (SRS_LAST + 0.5 - lo) / (hi - lo) * 100;
+    mark.style.left = Math.max(0, Math.min(100, pct)) + '%';
+    mark.style.display = '';
+  } else {
+    mark.style.display = 'none';
+  }
+  updateEraWarning();
+}
+
+function updateEraWarning(){
+  const w = $('eraWarn');
+  if (S.year >= NIBRS_FIRST){
+    w.style.display = '';
+    w.innerHTML = '<strong>NIBRS era.</strong> 2020+ figures come from a different FBI ' +
+      'collection system than 1960–2019 and are not directly comparable across the ' +
+      Math.max(...[SRS_LAST]) + '/' + NIBRS_FIRST + ' boundary.';
+  } else {
+    w.style.display = 'none';
+  }
+}
+
+
+
+
+
+function initUI(){
+  // crime type dropdown
+  const sel = $('crime');
+  syncCrimeOptions();
+  sel.onchange = () => {
+    S.crime = sel.value;
+    render();
+  };
+
+  // density palette
+  const pal = $('palette');
+  pal.innerHTML = Object.entries(PALETTES)
+    .map(([k,v]) => '<option value="' + k + '">' + v.label + '</option>').join('');
+  pal.value = S.palette;
+  const paletteNote = () => {
+    const p = PALETTES[S.palette];
+    $('paletteNote').innerHTML = p.note ? p.note : (p.safe
+      ? 'Perceptually uniform and readable with any form of colour vision deficiency.'
+      : '<strong>Note:</strong> green–red is the hardest pairing for red–green colour ' +
+        'vision deficiency (~8% of men). Every other ramp here reads correctly for everyone.');
+  };
+  paletteNote();
+  pal.onchange = () => { S.palette = pal.value; paletteNote(); render(); };
+
+  // year slider bounded by what the data actually contains
+  syncYearSlider(true);
+  $('year').oninput = () => {
+    S.year = +$('year').value;
+    $('yearVal').textContent = S.year;
+    updateEraWarning();
+    render();
+  };
+
+  // exaggeration
+  const ex = $('exag');
+  ex.oninput = () => {
+    S.exag = +ex.value;
+    $('exagVal').textContent = S.exag.toFixed(2) + '×';
+    render();
+  };
+
+  // relative / absolute height scale
+  // Which measure drives which channel. Colour always takes the other,
+  // so the two can never both show the same thing.
+  const encNote = () => {
+    $('encNote').innerHTML = S.swap
+      ? 'Colour shows the crime rate. Height is density on a log scale — ' +
+        'linear height would flatten everywhere outside the big cities.'
+      : 'Colour shows population density, log-scaled.';
+  };
+  const setSwap = (v) => {
+    S.swap = v;
+    $('encRate').classList.toggle('on', !v);
+    $('encDens').classList.toggle('on', v);
+    encNote();
+    render();
+  };
+  encNote();
+  $('encRate').onclick = () => setSwap(false);
+  $('encDens').onclick = () => setSwap(true);
+
+  $('scNorm').onclick = () => {
+    S.normalize = true;
+    $('scNorm').classList.add('on'); $('scAbs').classList.remove('on');
+    render();
+  };
+  $('scAbs').onclick = () => {
+    S.normalize = false;
+    $('scAbs').classList.add('on'); $('scNorm').classList.remove('on');
+    render();
+  };
+
+  // geography segment — county becomes live once counties.json is built
+  $('geoSeg').querySelectorAll('button').forEach(b => {
+    b.onclick = () => {
+      if (b.disabled) return;
+      $('geoSeg').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      S.geo = b.dataset.geo;
+
+      // Each layer has its own year coverage; clamp into range.
+      const yrs = new Set();
+      const store = activeStore();
+      for (const f of activeFeatures()){
+        const by = store.get(featureKey(f));
+        if (by) for (const y of by.keys()) yrs.add(y);
+      }
+      if (yrs.size){
+        S.years = [...yrs].sort((a,b) => a-b);
+        syncYearSlider(false);
+      }
+      syncCrimeOptions();
+      recomputeScales();
+      render();
+      fitActiveLayer();
+    };
+  });
+}
+</script>
+</body>
+</html>
