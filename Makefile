@@ -65,10 +65,13 @@ counties:
 # so those requests get clamped to /data/ and 404. Expose data/ inside the
 # root via a symlink rather than serving the repo root: .env holds the API
 # key and must never be reachable over HTTP.
+#
+# scripts/serve.py rather than `python -m http.server`: the stdlib module
+# binds every interface and sends no cache headers, and neither default
+# can be changed from its CLI. See the module docstring.
 serve:
 	@ln -sfn ../data viewer/data
-	@echo "http://localhost:$(PORT)"
-	@$(PY) -m http.server $(PORT) --directory viewer
+	@$(PY) scripts/serve.py --port $(PORT)
 
 test:
 	$(PY) tests/test_pipeline.py

@@ -72,8 +72,10 @@ def fetch_agency_offenses(key, agencies, crimes, first, last, max_requests):
         for a in agencies:
             q = urllib.parse.urlencode({
                 "from": "01-%d" % first, "to": "12-%d" % last, "API_KEY": key})
+            # Remote input in a URL path - see the same note in
+            # build_counties.fetch_agency_offenses.
             url = ("https://api.usa.gov/crime/fbi/cde/summarized/agency/%s/%s?%s"
-                   % (a["ori"], c["cde"], q))
+                   % (urllib.parse.quote(str(a["ori"]), safe=""), c["cde"], q))
             try:
                 folded = fold_monthly(fetch(url, expect_json=True))
             except Exception:  # noqa: BLE001
