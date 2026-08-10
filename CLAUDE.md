@@ -20,10 +20,14 @@ the viewer.
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
-`make serve` roots the server at `viewer/` and symlinks `data/` into it.
-Do not "fix" this by serving the repo root — that publishes `.env`.
-Python's http.server sends no `Cache-Control`, so hard-refresh the
-browser after editing the viewer or you will debug a stale copy.
+`make serve` runs `scripts/serve.py`, which roots the server at `viewer/`
+and symlinks `data/` into it. Do not "fix" this by serving the repo root
+— that publishes `.env`. It exists instead of `python -m http.server`
+because that module binds every interface and sends no cache headers,
+and neither is settable from its CLI. Both replacements are load-bearing:
+loopback-only keeps an unbuilt-for-the-internet preview off the LAN, and
+`no-store` plus dropped conditional-GET headers is what stops you editing
+the viewer, reloading, and debugging the previous copy.
 
 Always run `make test` after touching `scripts/common.py` — the
 geometry and fold logic there is what silently corrupts output if wrong.
