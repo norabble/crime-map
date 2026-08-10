@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from common import (  # noqa: E402
-    fold_monthly, geo_area_sq_mi, point_in_geometry, topo_to_features,
+    fold_monthly, geo_area_sq_mi, point_in_geometry, redact_url,
+    topo_to_features,
 )
 
 PASS = FAIL = 0
@@ -208,6 +209,37 @@ ok(_norm_county("Prince of Wales-Hyder Census Area") == "prince of wales hyder",
 ok(_norm_county("DeKalb") == "dekalb", "plain names pass through")
 ok(_norm_county("") == "", "empty string safe")
 ok(_norm_county(None) == "", "None safe")
+
+section("API key redaction")
+# Every one of these is a URL that could reach a log, an exception message
+# or a cache filename. The assertion that matters is not "the output looks
+# right" but "the secret is not in it", so each case checks for the absence
+# of the key itself rather than for an expected string.
+SECRET = "abcdef0123456789abcdef0123456789abcdef01"
+for label, url in [
+    ("key last in the query", "https://api.usa.gov/x?from=01-2020&API_KEY=" + SECRET),
+    ("key first in the query", "https://api.usa.gov/x?API_KEY=" + SECRET),
+    ("lowercase api_key", "https://api.usa.gov/x?api_key=" + SECRET),
+    ("apikey, no separator", "https://api.usa.gov/x?apikey=" + SECRET),
+    ("hyphenated api-key", "https://api.usa.gov/x?api-key=" + SECRET),
+    ("mixed case Api_Key", "https://api.usa.gov/x?Api_Key=" + SECRET),
+    ("trailing fragment", "https://api.usa.gov/x?API_KEY=" + SECRET + "#frag"),
+    ("key followed by another param",
+     "https://api.usa.gov/x?API_KEY=" + SECRET + "&to=12-2024"),
+]:
+    ok(SECRET not in redact_url(url), label)
+
+# Redaction must not eat anything else: a truncated URL is a debugging
+# problem of its own, and a cache path keyed on an over-redacted URL would
+# collide across genuinely different requests.
+ok(redact_url("https://api.usa.gov/x?from=01-2020&API_KEY=" + SECRET + "&to=12-2024")
+   == "https://api.usa.gov/x?from=01-2020&API_KEY=REDACTED&to=12-2024",
+   "surrounding query parameters survive intact")
+ok(redact_url("https://api.usa.gov/x?API_KEY=" + SECRET + "#frag")
+   .endswith("#frag"), "fragment survives intact")
+ok(redact_url("https://corgis-edu.github.io/state_crime.csv")
+   == "https://corgis-edu.github.io/state_crime.csv", "key-free URL unchanged")
+ok(redact_url("") == "" and redact_url(None) == "", "empty and None safe")
 
 print("\n" + ("FAILED %d" % FAIL if FAIL else "ALL PASSED") + "  (%d assertions)" % PASS)
 sys.exit(1 if FAIL else 0)

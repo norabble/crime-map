@@ -217,6 +217,9 @@ class Throttle:
 THROTTLE = Throttle(per_hour=900)
 
 
+_KEY_PARAM_RE = re.compile(r"([?&]api[-_]?key=)[^&#]*", re.IGNORECASE)
+
+
 def redact_url(url: str, mark: str = "REDACTED") -> str:
     """Strip the API key out of a URL before it is shown or stored.
 
@@ -225,8 +228,16 @@ def redact_url(url: str, mark: str = "REDACTED") -> str:
     in an exception message ends up in terminal scrollback, CI logs and
     any stack trace someone pastes into an issue - which is how a
     build-time-only secret escapes into somewhere public.
+
+    The parameter name is matched case-insensitively, and api_key/apikey/
+    api-key all count. api.data.gov accepts every one of those spellings,
+    and discover_sources.py tells you to paste a URL straight out of a
+    browser network tab into BULK_ROUTES - so the spelling that reaches
+    this function is not under our control. Matching only the exact
+    literal `API_KEY=` looks like it works right up until someone pastes
+    the other one, at which point the key is printed in full.
     """
-    return re.sub(r"([?&]API_KEY=)[^&]*", r"\1" + mark, url or "")
+    return _KEY_PARAM_RE.sub(r"\1" + mark, url or "")
 
 
 def _cache_path(url: str, ext: str = ".bin") -> Path:

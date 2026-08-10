@@ -248,8 +248,12 @@ def fetch_agency_offenses(key: str, agencies: list, crimes: list,
         for a in agencies:
             q = urllib.parse.urlencode({
                 "from": "01-%d" % first, "to": "12-%d" % last, "API_KEY": key})
+            # The ORI comes back from the roster response, so it is remote
+            # input landing in a URL path. Unquoted, an ORI carrying `?` or
+            # `#` would truncate the query - taking the API key with it and
+            # silently changing which resource is requested.
             url = ("https://api.usa.gov/crime/fbi/cde/summarized/agency/%s/%s?%s"
-                   % (a["ori"], c["cde"], q))
+                   % (urllib.parse.quote(str(a["ori"]), safe=""), c["cde"], q))
             try:
                 payload = fetch(url, expect_json=True)
                 folded = fold_monthly(payload)
