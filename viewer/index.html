@@ -396,7 +396,17 @@ async function loadLocal(url, optional = false){
     return await res.json();
   } catch (err){
     if (optional) return null;
-    throw new Error(url + ' is not valid JSON — rebuild with: make data');
+    // res.json() rejects for two unrelated reasons, and they need opposite
+    // advice. A SyntaxError means bytes arrived and were not JSON — a build
+    // problem. Anything else (a TypeError from a connection dropped mid-body)
+    // means the body never finished arriving, which is a transport problem;
+    // reporting that as "not valid JSON" sends you off to rebuild a file that
+    // was never broken. That misdiagnosis cost real time once already.
+    if (err instanceof SyntaxError){
+      throw new Error(url + ' is not valid JSON — rebuild with: make data');
+    }
+    throw new Error('Transfer of ' + url + ' did not complete (' + err.message +
+      '). The file on disk is probably fine — reload the page.');
   }
 }
 
