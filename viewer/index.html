@@ -228,6 +228,14 @@
   </div>
 
   <div class="grp">
+    <div class="row"><h2 style="margin:0">Fade below</h2><span class="val" id="fadeVal">off</span></div>
+    <input type="range" id="fade" min="0" max="0.9" value="0" step="0.01" />
+    <div class="note">Dims everything shorter than this so the tall units stand
+      out. Measured against the fixed scale, so it does not drift with the year
+      or with height exaggeration.</div>
+  </div>
+
+  <div class="grp">
     <h2>Height shows</h2>
     <div class="seg">
       <button id="encRate" class="on" title="Pillar height is the crime rate; colour is population density">Crime rate</button>
@@ -502,6 +510,11 @@ const S = {
   crime: 'violent',
   year: 2019,
   exag: 1,
+  // Threshold below which pillars are dimmed, held as a FRACTION of the
+  // fixed height domain rather than in rate or density units. That is what
+  // lets one slider serve both measures: the handle keeps its meaning when
+  // `swap` moves height from crime rate to density. 0 disables the effect.
+  fade: 0,
   normalize: true,
   // false: height = crime rate, colour = density (the default reading)
   // true:  the two channels swap
@@ -530,6 +543,13 @@ const S = {
    used so "Absolute" mode is comparable across crime types.          */
 let ABS_MAX = 1;
 const MAX_HEIGHT_M = 420000;   // metres at exaggeration 1.0
+
+/* Faded pillars sink toward this dark blue-grey and drop to this alpha.
+   Deliberately one notch fainter than the low-coverage treatment (which
+   mixes toward mid grey at alpha 130), so the two readings stay distinct
+   when they land on the same unit. */
+const FADE_RGB = [46, 54, 72];
+const FADE_ALPHA = 48;
 
 /* ══════════════════════════════════════════════════════════════════
    BOOT
@@ -911,6 +931,12 @@ function render(){
 
     r.f.props.elev = isFinite(tHeight) ? tHeight * MAX_HEIGHT_M * S.exag : 0;
 
+    // Compared against tHeight, which is pre-exaggeration: dragging the
+    // exaggeration slider must change how tall the pillars are, never which
+    // ones are faded. The S.fade > 0 guard leaves no-data units on their own
+    // alpha-70 treatment instead of fading them when the feature is off.
+    const faded = S.fade > 0 && !(isFinite(tHeight) && tHeight >= S.fade);
+
     let col = isFinite(tColour) ? rampColor(tColour, stops) : [55, 62, 80];
 
     // Under-reported unit-years are pulled toward grey so an artificially
@@ -921,8 +947,22 @@ function render(){
              Math.round(col[1]*0.34 + g*0.66),
              Math.round(col[2]*0.34 + g*0.66)];
     }
+
+    let alpha = isFinite(tHeight) ? (r.lowCov ? 130 : 255) : 70;
+
+    // Fade composes on top of the low-coverage grey rather than replacing
+    // it, so a faded under-reported unit stays distinguishable from a faded
+    // well-reported one and neither signal is lost.
+    if (faded){
+      col = [Math.round(col[0]*0.28 + FADE_RGB[0]*0.72),
+             Math.round(col[1]*0.28 + FADE_RGB[1]*0.72),
+             Math.round(col[2]*0.28 + FADE_RGB[2]*0.72)];
+      alpha = Math.min(alpha, FADE_ALPHA);
+    }
+
     r.f.props.color = col;
-    r.f.props.alpha = isFinite(tHeight) ? (r.lowCov ? 130 : 255) : 70;
+    r.f.props.alpha = alpha;
+    r.f.props.faded = faded;
   }
 
   const layer = new deck.GeoJsonLayer({
@@ -934,7 +974,9 @@ function render(){
     stroked: false,
     getElevation: f => f.props.elev,
     getFillColor: f => [f.props.color[0], f.props.color[1], f.props.color[2], f.props.alpha],
-    getLineColor: [255, 255, 255, 22],
+    // An accessor rather than a constant: a constant wireframe would draw a
+    // bright cage around every faded pillar and undo the effect entirely.
+    getLineColor: f => f.props.faded ? [255, 255, 255, 7] : [255, 255, 255, 22],
     lineWidthMinPixels: 1,
     pickable: true,
     autoHighlight: true,
@@ -942,7 +984,8 @@ function render(){
     material: { ambient: .55, diffuse: .65, shininess: 24, specularColor: [50,50,55] },
     updateTriggers: {
       getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap],
-      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap]
+      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap, S.fade],
+      getLineColor: [S.year, S.geo, S.crime, S.normalize, S.swap, S.fade]
     },
     transitions: { getElevation: 260, getFillColor: 260 },
     onHover: info => showTip(info)
@@ -951,6 +994,25 @@ function render(){
   S.deck.setProps({ layers: [layer] });
   updateLegend(def, rows, heightRef, maxRate, stops);
   updateRanking(def, rows);
+  updateFadeReadout(heightRef, logMin, logSpan);
+}
+
+/* S.fade is a fraction of the fixed height domain — the honest internal
+   value, since that is what the threshold is actually compared against.
+   Nobody thinks in fractions of a domain, so the readout converts it back
+   into whichever units are currently driving height. */
+function updateFadeReadout(heightRef, logMin, logSpan){
+  const el = $('fadeVal');
+  if (S.fade <= 0){ el.textContent = 'off'; return; }
+  if (S.swap){
+    // Density drives height on a log scale, so invert the log mapping.
+    // Interpolating linearly between the domain ends would report a value
+    // the slider is not actually cutting at.
+    const d = Math.pow(10, logMin + S.fade * logSpan);
+    el.textContent = fmt(d, d < 100 ? 1 : 0) + ' /sq mi';
+  } else {
+    el.textContent = fmt(S.fade * heightRef, 0) + ' /100k';
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1222,6 +1284,14 @@ function initUI(){
   ex.oninput = () => {
     S.exag = +ex.value;
     $('exagVal').textContent = S.exag.toFixed(2) + '×';
+    render();
+  };
+
+  // fade threshold. The readout needs the scale domains, which only exist
+  // inside render(), so it is updated from there rather than here.
+  const fd = $('fade');
+  fd.oninput = () => {
+    S.fade = +fd.value;
     render();
   };
 
