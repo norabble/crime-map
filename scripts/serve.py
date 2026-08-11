@@ -23,6 +23,18 @@ time, and neither is reachable through the module's CLI.
 The root stays at viewer/ rather than the repo root, with data/ exposed
 through a symlink the Makefile creates. Serving the repo root instead
 would put .env - which holds the API key - one HTTP request away.
+
+WHAT MUST NOT BE COPIED BACK FROM IT
+------------------------------------
+Only those two behaviours are wrong. `python -m http.server` is threaded
+(ThreadingHTTPServer), and that part is load-bearing: a single-threaded
+server accepts one connection and handles it to completion before
+accepting the next, so a connection that never sends a request line parks
+the accept loop in readline() and starves everything behind it. Browsers
+open exactly such sockets speculatively, which is why this reproduced as
+"the first load fails, the reload works" - and because the viewer reports
+any failed body read as invalid JSON, it read as a corrupt data file.
+Keep the threading. tests/test_pipeline.py asserts it.
 """
 
 from __future__ import annotations
@@ -30,7 +42,6 @@ from __future__ import annotations
 import argparse
 import functools
 import http.server
-import socketserver
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -63,6 +74,12 @@ class NoStoreHandler(http.server.SimpleHTTPRequestHandler):
             del self.headers[header]
         return super().send_head()
 
+    # A thread per connection means an idle socket costs a parked thread
+    # rather than the whole server. This bounds that cost: a client that
+    # connects and then says nothing is dropped instead of parking its
+    # thread forever. Comfortably longer than any real request here.
+    timeout = 30
+
     def log_message(self, fmt, *args):
         # Default logs every request to stderr, which buries the one line
         # that matters (the URL to open) under basemap tile noise.
@@ -90,10 +107,13 @@ def main() -> None:
     # exists to prevent.
     handler = functools.partial(NoStoreHandler, directory=str(root))
 
-    # allow_reuse_address so a restart after Ctrl-C is not refused for the
-    # length of TIME_WAIT.
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer((args.bind, args.port), handler) as httpd:
+    # ThreadingHTTPServer, not TCPServer: see "WHAT MUST NOT BE COPIED
+    # BACK FROM IT" above. allow_reuse_address so a restart after Ctrl-C
+    # is not refused for the length of TIME_WAIT; daemon_threads so Ctrl-C
+    # exits instead of waiting on connections a browser is holding open.
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    http.server.ThreadingHTTPServer.daemon_threads = True
+    with http.server.ThreadingHTTPServer((args.bind, args.port), handler) as httpd:
         print("http://%s:%d" % (args.bind, args.port), flush=True)
         try:
             httpd.serve_forever()

@@ -29,6 +29,15 @@ loopback-only keeps an unbuilt-for-the-internet preview off the LAN, and
 `no-store` plus dropped conditional-GET headers is what stops you editing
 the viewer, reloading, and debugging the previous copy.
 
+Only those two defaults are wrong, though. **The server must stay
+threaded.** `python -m http.server` is (`ThreadingHTTPServer`), and an
+earlier rewrite here dropped that: a single-threaded server parks its
+accept loop in `readline()` on any connection that never sends a request
+line, which is exactly what a browser preconnect is. It presented as "the
+first load fails, the reload works", and because the viewer used to
+report every failed body read as invalid JSON, it read as a corrupt data
+file. `make test` now asserts an idle socket cannot starve a request.
+
 Always run `make test` after touching `scripts/common.py` — the
 geometry and fold logic there is what silently corrupts output if wrong.
 
