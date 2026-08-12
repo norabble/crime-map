@@ -46,6 +46,40 @@ python scripts/build_states.py --no-nibrs
 
 ---
 
+## Publishing
+
+The live site is built and deployed by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push
+to `main`, and can be re-run against the same commit with:
+
+```bash
+gh workflow run "Deploy to GitHub Pages"
+```
+
+Three things about that pipeline are worth knowing before changing it.
+
+**Pages must be set to "GitHub Actions".** Settings → Pages → Source. With
+the default "Deploy from a branch" the workflow builds and tests
+perfectly and then dies at `actions/configure-pages`, which is exactly
+what happened on the first deploy here.
+
+**CI never builds the data.** `data/*.json` is committed, and the workflow
+only reads it. `counties.json` needs a Return A file placed in
+`.cache/bulk/` by hand from an authenticated openICPSR download, so no
+workflow could rebuild it anyway — and keeping the build local means the
+API key stays a local secret instead of a repository secret. `make data`
+and `make states` are local, keyed operations by design.
+
+**The build is a gate, not a formality.** It runs `npm run typecheck`,
+`npm test` and `make test` before publishing, asserts that `base` in
+`vite.config.ts` matches the repository name (Project Pages serve from
+`/<repo>/`, and a mismatch renders as a blank page rather than an error),
+and checks that all four `data/*.json` files reached `dist/` non-empty.
+A site that shipped without its data would look fine in CI and fail only
+in a browser.
+
+---
+
 ## What gets built
 
 ```
@@ -238,6 +272,8 @@ draws counties rather than agency points.
 ```
 Makefile                 build targets
 .env.example             API key template
+.github/workflows/
+  pages.yml              test, build and deploy to GitHub Pages
 scripts/
   common.py              HTTP w/ cache, throttle, retry; geometry maths
   fetch_geometry.py      state + county polygons, precomputed areas
@@ -253,9 +289,14 @@ web/
   index.html             markup, styles and the entry <script>
   src/                   the viewer, as TypeScript modules
     main.ts              boot
+    load.ts              fetch helpers; absent (404) vs failed
+    map.ts               MapLibre + deck overlay, basemap watchdog
     data.ts              joins data/*.json into the render stores
+    counties.ts          the county layer, fetched on first click
     render.ts            deck.gl layer construction
     scales.ts            colour ramps, fixed domains, fade threshold
+    status.ts            the "what is working right now" panel
+    ui.ts                controls and their event wiring
     *.test.ts            vitest, run with npm test
 ```
 

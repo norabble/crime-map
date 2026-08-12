@@ -23,16 +23,18 @@ history.
 
 ## This repository is public
 
-The threat model changed when it went public, and the old warnings were
-written for a different one.
+`norabble/crime-map` was made public in August 2026 and is live at
+https://norabble.github.io/crime-map/. The threat model changed then, and
+the old warnings were written for a different one.
 
 **Anything committed is world-readable, immediately and permanently, and
-so is every blob in history.** Previously, leaking `.env` took a
-misconfigured local server; now it takes one `git add -f`. The
-`.gitignore` entry is the whole defence. Before publishing, this was
-verified: `.env` has never been committed on any branch, the key appears
-in no reachable blob, and the only key-shaped string in the tree is the
-deliberately fake `SECRET` fixture in `tests/test_pipeline.py`.
+so is every blob in history.** Leaking `.env` used to take a misconfigured
+local server; now it takes one `git add -f`. The `.gitignore` entry is the
+whole defence. This was verified before publishing: `.env` has never been
+committed on any branch, the key appears in no reachable blob, and the only
+key-shaped string in the tree is the deliberately fake `SECRET` fixture in
+`tests/test_pipeline.py`. Anything added to the tree from here on is
+published the moment it lands on `main`.
 
 `make data` and `make states` stay local, keyed operations. Do not move
 the API key into GitHub Actions secrets to automate them — the openICPSR
@@ -52,6 +54,12 @@ copy of the key in a second place.
     make import      national counties 1960-2024 from Return A
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
+
+Pushing to `main` deploys the site; `gh workflow run "Deploy to GitHub
+Pages"` republishes the same commit. Pages is set to the **GitHub
+Actions** source — with "Deploy from a branch" the workflow tests and
+builds cleanly and then fails at `configure-pages`, which is how the
+first deploy failed. See "Publishing" in the README.
 
 `make serve` is a thin alias for `npm run dev`. There is no hand-written
 server here any more, and there should not be one again: the last one was
