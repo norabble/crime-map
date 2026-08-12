@@ -61,17 +61,17 @@ import:
 counties:
 	$(PY) scripts/build_counties.py --states $(STATES)
 
-# The viewer fetches ../data/*.json, but the server is rooted at viewer/,
-# so those requests get clamped to /data/ and 404. Expose data/ inside the
-# root via a symlink rather than serving the repo root: .env holds the API
-# key and must never be reachable over HTTP.
+# Kept as a thin alias so muscle memory still works; the dev server is
+# Vite now. `npm run dev` runs scripts/sync-data.mjs first, which copies
+# data/ into web/public/data where the server and the build both find it.
 #
-# scripts/serve.py rather than `python -m http.server`: the stdlib module
-# binds every interface and sends no cache headers, and neither default
-# can be changed from its CLI. See the module docstring.
+# There is no hand-written server here any more, deliberately. The last one
+# was single-threaded and stalled on browser preconnects, and its stated
+# reason for existing was wrong besides - `python -m http.server` has had
+# --bind and --directory for years. See vite.config.ts for the part that
+# still matters: fs.allow is what keeps .env and .git out of reach.
 serve:
-	@ln -sfn ../data viewer/data
-	@$(PY) scripts/serve.py --port $(PORT)
+	@npm run dev
 
 test:
 	$(PY) tests/test_pipeline.py

@@ -1,8 +1,13 @@
 # Generated data - rebuild with `make data`
 data/*.json
 
-# Serve-time symlink into data/, created by `make serve`
-viewer/data
+# Vite's copy of data/, refreshed by scripts/sync-data.mjs before dev and
+# before build. Never edit here - data/ is the source.
+web/public/data/
+
+# Node toolchain and build output
+node_modules/
+dist/
 
 # Download cache (can be large; safe to delete)
 .cache/

@@ -12,12 +12,7 @@ agency placement, TopoJSON decoding, and county-name normalisation.
 from __future__ import annotations
 
 import math
-import socket
-import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -245,66 +240,6 @@ ok(redact_url("https://api.usa.gov/x?API_KEY=" + SECRET + "#frag")
 ok(redact_url("https://corgis-edu.github.io/state_crime.csv")
    == "https://corgis-edu.github.io/state_crime.csv", "key-free URL unchanged")
 ok(redact_url("") == "" and redact_url(None) == "", "empty and None safe")
-
-section("serve.py concurrency")
-# Loopback only - no external network, so this still satisfies the
-# "offline self-tests" contract of `make test`.
-#
-# The regression this guards: a single-threaded server accepts one
-# connection and handles it to completion before accepting the next, so a
-# connection that never sends a request line blocks the accept loop inside
-# readline() and starves every real request behind it. Browsers open
-# exactly such sockets speculatively (preconnect), which made the viewer
-# fail on first load and succeed on reload - and the viewer reports any
-# failed body read as "not valid JSON", so it looked like a data bug.
-
-
-def _free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _serve_survives_idle_socket():
-    """True if a real request completes while an idle socket is held open."""
-    port = _free_port()
-    proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "scripts" / "serve.py"),
-         "--port", str(port), "--root", "viewer"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    idle = None
-    try:
-        url = "http://127.0.0.1:%d/index.html" % port
-        for _ in range(100):                      # wait for listen
-            try:
-                urllib.request.urlopen(url, timeout=1).read()
-                break
-            except Exception:
-                if proc.poll() is not None:
-                    return False
-                time.sleep(0.05)
-        else:
-            return False
-
-        # The preconnect: connected, but not one byte of request sent.
-        idle = socket.create_connection(("127.0.0.1", port))
-        try:
-            return len(urllib.request.urlopen(url, timeout=5).read()) > 0
-        except Exception:
-            return False
-    finally:
-        if idle is not None:
-            idle.close()
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
-ok(_serve_survives_idle_socket(),
-   "an idle client socket does not starve real requests")
 
 print("\n" + ("FAILED %d" % FAIL if FAIL else "ALL PASSED") + "  (%d assertions)" % PASS)
 sys.exit(1 if FAIL else 0)

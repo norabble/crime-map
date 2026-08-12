@@ -5,38 +5,46 @@ rate; colour = population density.
 
 ## Architecture
 
-Data is a **build artifact**, not a runtime fetch. `scripts/` download
-and normalise into `data/*.json`; `viewer/index.html` only reads those
-files. The API key is build-time only and must never be referenced from
-the viewer.
+Data is a **build artifact**, not a runtime fetch. `scripts/` (Python)
+download and normalise into `data/*.json`; the viewer under `web/` only
+reads those files. The API key is build-time only and must never be
+referenced from the viewer.
+
+Two toolchains, one boundary: Python builds the data, Node serves and
+builds the site. They meet at `data/*.json` and nowhere else.
 
 ## Commands
 
-    make test        offline self-tests, no network or key needed
+    npm run dev      http://127.0.0.1:8000/crime-map/
+    npm run build    -> dist/  (what GitHub Pages serves)
+    npm test         vitest, viewer logic
+    npm run typecheck
+
+    make test        offline self-tests for the Python pipeline
     make data        full build (geometry + states)
-    make serve       http://localhost:8000
     make inspect     schema report for a bulk file in .cache/bulk/
     make import      national counties 1960-2024 from Return A
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
-`make serve` runs `scripts/serve.py`, which roots the server at `viewer/`
-and symlinks `data/` into it. Do not "fix" this by serving the repo root
-— that publishes `.env`. It exists instead of `python -m http.server`
-because that module binds every interface and sends no cache headers,
-and neither is settable from its CLI. Both replacements are load-bearing:
-loopback-only keeps an unbuilt-for-the-internet preview off the LAN, and
-`no-store` plus dropped conditional-GET headers is what stops you editing
-the viewer, reloading, and debugging the previous copy.
+`make serve` is a thin alias for `npm run dev`. There is no hand-written
+server here any more, and there should not be one again: the last one was
+single-threaded and stalled whenever a browser opened a preconnect socket
+("first load fails, reload works"), and its stated reason for existing was
+wrong anyway — `python -m http.server` has had `--bind` and `--directory`
+for years.
 
-Only those two defaults are wrong, though. **The server must stay
-threaded.** `python -m http.server` is (`ThreadingHTTPServer`), and an
-earlier rewrite here dropped that: a single-threaded server parks its
-accept loop in `readline()` on any connection that never sends a request
-line, which is exactly what a browser preconnect is. It presented as "the
-first load fails, the reload works", and because the viewer used to
-report every failed body read as invalid JSON, it read as a corrupt data
-file. `make test` now asserts an idle socket cannot starve a request.
+**`server.fs.allow` in `vite.config.ts` is load-bearing.** Setting
+`root: 'web'` does *not* confine the dev server; a request for
+`/crime-map/../.git/config` resolves straight out of the web root and was
+served until `fs.allow` was narrowed. `.env` holds the API key and `.git`
+can hold credentials, so both are also in `fs.deny`. Verify with a
+traversal probe after touching that config, not by reading it.
+
+`npm run dev` and `npm run build` both run `scripts/sync-data.mjs` first,
+which copies `data/` into `web/public/data/`. A copy, not a symlink, so
+dev and build behave identically. Never edit `web/public/data/` — it is
+overwritten.
 
 Always run `make test` after touching `scripts/common.py` — the
 geometry and fold logic there is what silently corrupts output if wrong.

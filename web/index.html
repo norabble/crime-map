@@ -328,7 +328,7 @@
   <div id="splashErr"></div>
 </div>
 
-<script>
+<script type="module">
 /* ══════════════════════════════════════════════════════════════════
    Crime Rates per Capita — 3D extruded choropleth
    Height : offences per 100,000 residents (selected crime type/year)
@@ -336,6 +336,12 @@
    ══════════════════════════════════════════════════════════════════ */
 
 const $ = id => document.getElementById(id);
+
+/* Data lives at <base>/data/. BASE_URL is whatever vite.config.ts sets, so
+   this resolves identically on the dev server and on Project Pages, where
+   the site is served from /crime-map/ rather than the domain root. Hardcoding
+   either a leading slash or a ../ hop gets one of the two environments wrong. */
+const DATA = file => import.meta.env.BASE_URL + 'data/' + file;
 const splashMsg = $('splashMsg');
 
 /* ---------- CDN loading with fallbacks ---------------------------- */
@@ -569,11 +575,11 @@ let bootStage = 'libraries';
     // scripts. No API key, no rate limits, works offline once built.
     bootStage = 'crime data';
     splashMsg.textContent = 'Loading crime data…';
-    const states = await loadLocal('../data/states.json');
+    const states = await loadLocal(DATA('states.json'));
 
     bootStage = 'geometry';
     splashMsg.textContent = 'Loading geometry…';
-    const geo = await loadLocal('../data/geo-states.json');
+    const geo = await loadLocal(DATA('geo-states.json'));
 
     bootStage = 'joining datasets';
     splashMsg.textContent = 'Joining datasets…';
@@ -583,8 +589,8 @@ let bootStage = 'libraries';
     // have it, so a missing file must not fail the whole boot.
     try {
       const [cGeo, cData] = await Promise.all([
-        loadLocal('../data/geo-counties.json', true),
-        loadLocal('../data/counties.json', true)
+        loadLocal(DATA('geo-counties.json'), true),
+        loadLocal(DATA('counties.json'), true)
       ]);
       if (cGeo && cData) { buildCounties(cGeo, cData); }
     } catch(e){ console.warn('county layer unavailable:', e.message); }
