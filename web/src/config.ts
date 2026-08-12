@@ -76,3 +76,13 @@ export const PALETTES: Record<string, Palette> = {
 /** Basemap style. The only remote dependency left after the CDN scripts went. */
 export const BASEMAP_STYLE =
   'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+
+/* How long to wait for the basemap before drawing the data without it.
+
+   If the style request stalls or fails, MapLibre never fires 'load' — and
+   the viewer used to hang the splash screen on that event forever, which
+   is what "the first load fails, a refresh fixes it" actually was. Long
+   enough that a slow-but-working CDN is not written off; short enough that
+   a dead one does not look like a broken app. If the style does turn up
+   afterwards the status flips back to ready, so guessing low is cheap. */
+export const BASEMAP_WATCHDOG_MS = 8000;

@@ -73,6 +73,33 @@ geometry and fold logic there is what silently corrupts output if wrong.
 - **Antimeridian.** Longitude deltas wrap to ±180 or Alaska's area is
   wrong by an order of magnitude.
 
+## The viewer must never fail silently
+
+Three bugs shared one cause: the viewer degraded invisibly, so "it's
+broken" and "it's fine" looked identical. Each fix has tests; all three
+were verified by reintroducing the bug and watching the suite go red.
+
+- **Boot never waits on the basemap.** Everything used to hang off
+  `map.on('load')`, which never fires if the cartocdn style stalls — the
+  splash then span forever, and a reload "fixed" it because the style was
+  cached. `map.ts` now starts on load *or* a watchdog, whichever comes
+  first, gated by `once()`. `interleaved:false` is what makes that legal:
+  deck draws to its own canvas and needs no loaded style. If the basemap
+  turns up late, the status flips back to ready by itself.
+- **`loadOptional` distinguishes absent from failed.** A 404 means the
+  build legitimately lacks that layer — stay quiet. Everything else means
+  it should have worked. The old single `optional` flag collapsed both to
+  `null`, which is why a failed 8.5 MB `counties.json` produced no signal
+  anywhere while the County button claimed no such dataset exists. Don't
+  reunify these.
+- **The county layer loads on click, not at boot.** It is 4.2 MB gzipped
+  against 0.45 MB for everything else; eager loading put first paint
+  behind the slowest request on the site. Tying it to a click is also what
+  makes a failure attributable, reportable and retryable.
+- **The Status panel is the contract.** Every layer is visibly working or
+  visibly not. `absent` is `warn`, never `bad` — an unbuilt layer is a
+  choice, and crying wolf about it teaches people to ignore the panel.
+
 ## Known-good reference values
 
 Useful for spotting regressions:

@@ -151,6 +151,16 @@
   .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:7px}
   .note strong{color:var(--warn);font-weight:600}
 
+  /* status rows */
+  .st{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+    font-size:10.5px;padding:2.5px 0}
+  .st-n{color:var(--muted)}
+  .st-v{font-variant-numeric:tabular-nums;text-align:right}
+  .st-ok{color:#5fd39a}
+  .st-warn{color:var(--accent)}
+  .st-bad{color:var(--warn);font-weight:600}
+  .st-idle{color:#6f798f}
+
   /* tooltip */
   .tip{
     position:absolute;z-index:20;pointer-events:none;background:#0d111b;
@@ -194,11 +204,14 @@
     <h2>Geographic area</h2>
     <div class="seg" id="geoSeg">
       <button data-geo="state" class="on">State</button>
-      <button data-geo="county" disabled title="No public nationwide county dataset with this offence breakdown — see Data notes">County</button>
+      <button data-geo="county" title="Loads the county layer (4.3 MB) on first use">County</button>
       <button data-geo="zip" disabled title="ZIP-level crime data does not exist nationally — see Data notes">ZIP code</button>
       <button data-geo="tract" disabled title="Census-tract crime data does not exist nationally — see Data notes">Census tract</button>
     </div>
-    <div class="note">Only <strong>State</strong> has a real nationwide source. See <em>Data notes</em> below.</div>
+    <div class="note">County data is fetched on first click — it is larger than
+      everything else combined. If it fails, <em>Status</em> below says so and
+      clicking again retries. ZIP and census tract have no nationwide source at
+      all; see <em>Data notes</em>.</div>
   </div>
 
   <div class="grp">
@@ -298,6 +311,13 @@
     <p><b>Population density</b> is computed from each state's true spherical land+water
        polygon area, so it will differ slightly from Census land-only density figures.</p>
   </details>
+
+  <div class="grp" style="margin-top:14px">
+    <h2>Status</h2>
+    <div id="statusList"></div>
+    <div class="note">What is actually loaded right now. A layer that fails
+      says so here rather than just not appearing.</div>
+  </div>
 </div>
 
 <!-- ───────────── RANKING ───────────── -->

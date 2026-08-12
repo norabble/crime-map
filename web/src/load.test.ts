@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadLocal } from './load';
+import { loadLocal, loadOptional } from './load';
 
 function mockFetch(impl: () => Promise<unknown>) {
   vi.stubGlobal('fetch', vi.fn(impl));
 }
+const ok = (json: () => Promise<unknown>) => async () => ({ ok: true, status: 200, json });
+const status = (code: number) => async () =>
+  ({ ok: code >= 200 && code < 300, status: code, json: async () => ({}) });
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -11,30 +14,21 @@ afterEach(() => vi.unstubAllGlobals());
    stalled transfer was reported as "not valid JSON — rebuild with: make
    data", which sent the investigation at the data files while the actual
    fault was in the server. The two causes need opposite advice. */
-describe('loadLocal error reporting', () => {
+describe('loadLocal (required files)', () => {
   it('returns parsed JSON on success', async () => {
-    mockFetch(async () => ({ ok: true, status: 200, json: async () => ({ a: 1 }) }));
+    mockFetch(ok(async () => ({ a: 1 })));
     await expect(loadLocal('/data/x.json')).resolves.toEqual({ a: 1 });
   });
 
   it('blames the build when the bytes arrived but were not JSON', async () => {
-    mockFetch(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => { throw new SyntaxError('Unexpected token <'); },
-    }));
+    mockFetch(ok(async () => { throw new SyntaxError('Unexpected token <'); }));
     await expect(loadLocal('/data/x.json')).rejects.toThrow(/is not valid JSON/);
     await expect(loadLocal('/data/x.json')).rejects.toThrow(/make data/);
   });
 
   it('blames the transfer when the body never finished arriving', async () => {
-    mockFetch(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => { throw new TypeError('network error'); },
-    }));
-    const p = loadLocal('/data/x.json');
-    await expect(p).rejects.toThrow(/did not complete/);
+    mockFetch(ok(async () => { throw new TypeError('network error'); }));
+    await expect(loadLocal('/data/x.json')).rejects.toThrow(/did not complete/);
     // The critical part: it must NOT tell you to rebuild a file that is fine.
     await expect(loadLocal('/data/x.json')).rejects.not.toThrow(/make data/);
   });
@@ -45,32 +39,66 @@ describe('loadLocal error reporting', () => {
   });
 
   it('reports the status code on an HTTP error', async () => {
-    mockFetch(async () => ({ ok: false, status: 404, json: async () => ({}) }));
-    await expect(loadLocal('/data/x.json')).rejects.toThrow(/HTTP 404/);
+    mockFetch(status(500));
+    await expect(loadLocal('/data/x.json')).rejects.toThrow(/HTTP 500/);
   });
 });
 
-/* Today `optional` collapses every failure to null. That is the mechanism
-   behind the silently-missing County tab, and Phase 3 changes it. These
-   tests document the CURRENT behaviour so the change is visible as a
-   deliberate edit to them rather than an accident. */
-describe('loadLocal optional files (pre-Phase-3 behaviour)', () => {
-  it('returns null when the file is genuinely absent', async () => {
-    mockFetch(async () => ({ ok: false, status: 404, json: async () => ({}) }));
-    await expect(loadLocal('/data/counties.json', true)).resolves.toBeNull();
+/* THE COUNTY-TAB BUG.
+
+   Every one of these outcomes used to return null, indistinguishably, and
+   boot then skipped the county layer with no signal at all. Only the first
+   is a legitimate reason to stay quiet. */
+describe('loadOptional distinguishes "never built" from "broke"', () => {
+  it('reports success with the payload', async () => {
+    mockFetch(ok(async () => ({ counties: {} })));
+    const r = await loadOptional<{ counties: unknown }>('/data/counties.json');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual({ counties: {} });
   });
 
-  it('ALSO returns null on a truncated transfer, indistinguishably', async () => {
-    mockFetch(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => { throw new TypeError('network error'); },
-    }));
-    await expect(loadLocal('/data/counties.json', true)).resolves.toBeNull();
+  it('calls a 404 absent - the build legitimately lacks this layer', async () => {
+    mockFetch(status(404));
+    const r = await loadOptional('/data/counties.json');
+    expect(r).toMatchObject({ ok: false, reason: 'absent' });
   });
 
-  it('ALSO returns null when the server is unreachable, indistinguishably', async () => {
+  it('calls a truncated transfer FAILED, not absent', async () => {
+    mockFetch(ok(async () => { throw new TypeError('network error'); }));
+    const r = await loadOptional('/data/counties.json');
+    expect(r).toMatchObject({ ok: false, reason: 'failed' });
+    if (!r.ok) expect(r.message).toMatch(/did not complete/);
+  });
+
+  it('calls an unreachable server FAILED, not absent', async () => {
     mockFetch(async () => { throw new TypeError('Failed to fetch'); });
-    await expect(loadLocal('/data/counties.json', true)).resolves.toBeNull();
+    expect(await loadOptional('/data/counties.json'))
+      .toMatchObject({ ok: false, reason: 'failed' });
+  });
+
+  it('calls malformed JSON FAILED, and says to rebuild', async () => {
+    mockFetch(ok(async () => { throw new SyntaxError('Unexpected token <'); }));
+    const r = await loadOptional('/data/counties.json');
+    expect(r).toMatchObject({ ok: false, reason: 'failed' });
+    if (!r.ok) expect(r.message).toMatch(/make data/);
+  });
+
+  it('calls a 500 FAILED, not absent', async () => {
+    mockFetch(status(500));
+    expect(await loadOptional('/data/counties.json'))
+      .toMatchObject({ ok: false, reason: 'failed' });
+  });
+
+  it('never reports a failure without a message to show the user', async () => {
+    for (const impl of [
+      status(500),
+      ok(async () => { throw new TypeError('network error'); }),
+      async () => { throw new TypeError('Failed to fetch'); },
+    ]) {
+      mockFetch(impl as () => Promise<unknown>);
+      const r = await loadOptional('/data/counties.json');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.message.length).toBeGreaterThan(10);
+    }
   });
 });

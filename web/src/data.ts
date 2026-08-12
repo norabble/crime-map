@@ -166,14 +166,10 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
   }
 
   S.hasCounties = matched > 0;
-  if (S.hasCounties) {
-    const btn = document.querySelector<HTMLButtonElement>('#geoSeg button[data-geo="county"]');
-    if (btn) {
-      btn.disabled = false;
-      btn.title = matched + ' counties loaded from data/counties.json';
-    }
-    console.log('County layer: ' + matched + ' counties');
-  }
+  // No DOM here. Whether the button is usable and what it says is the UI
+  // layer's business (see counties.ts and status.ts) - this function's job
+  // is the join, and keeping it DOM-free keeps it testable.
+  if (S.hasCounties) console.log('County layer: ' + matched + ' counties');
 }
 
 /* --- fixed global scales -----------------------------------------

@@ -270,7 +270,7 @@ script tags, so the only host contacted at runtime is the basemap
 
 | Control | Effect |
 |---------|--------|
-| Geographic area | State, or County when `counties.json` exists |
+| Geographic area | State, or County — the county layer (4.2 MB gzipped) is fetched on first click, not at startup |
 | Crime type | 9 types: violent/property totals, homicide, rape, robbery, aggravated assault, burglary, larceny, motor vehicle theft |
 | Year | 1960–present; orange tick marks the SRS/NIBRS boundary |
 | Height exaggeration | Scales pillar height |

@@ -1,4 +1,5 @@
 import { CRIMES, NIBRS_FIRST, PALETTES, SRS_LAST } from './config';
+import { ensureCounties } from './counties';
 import {
   activeFeatures, activeStore, availableCrimes, featureKey, recomputeScales,
 } from './data';
@@ -139,29 +140,52 @@ export function initUI(): void {
     render();
   };
 
-  // geography segment — county becomes live once counties.json is built
+  // geography segment
   $('geoSeg').querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
     b.onclick = () => {
       if (b.disabled) return;
-      $('geoSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
-      b.classList.add('on');
-      S.geo = b.dataset.geo as 'state' | 'county';
-
-      // Each layer has its own year coverage; clamp into range.
-      const yrs = new Set<number>();
-      const store = activeStore();
-      for (const f of activeFeatures()) {
-        const by = store.get(featureKey(f));
-        if (by) for (const y of by.keys()) yrs.add(y);
-      }
-      if (yrs.size) {
-        S.years = [...yrs].sort((a, b) => a - b);
-        syncYearSlider(false);
-      }
-      syncCrimeOptions();
-      recomputeScales();
-      render();
-      fitActiveLayer();
+      void selectGeo(b);
     };
   });
+}
+
+/* Switching to counties may need a 4.3 MB fetch first. If it fails we stay
+   on the current layer rather than switching to an empty one - the status
+   panel says why, and clicking County again retries. */
+async function selectGeo(b: HTMLButtonElement): Promise<void> {
+  const target = b.dataset.geo as 'state' | 'county';
+
+  if (target === 'county' && !S.hasCounties) {
+    b.disabled = true;
+    const label = b.textContent;
+    b.textContent = 'Loading…';
+    let loaded = false;
+    try {
+      loaded = await ensureCounties();
+    } finally {
+      b.textContent = label;
+      b.disabled = false;
+    }
+    if (!loaded) return;
+  }
+
+  $('geoSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+  b.classList.add('on');
+  S.geo = target;
+
+  // Each layer has its own year coverage; clamp into range.
+  const yrs = new Set<number>();
+  const store = activeStore();
+  for (const f of activeFeatures()) {
+    const by = store.get(featureKey(f));
+    if (by) for (const y of by.keys()) yrs.add(y);
+  }
+  if (yrs.size) {
+    S.years = [...yrs].sort((a, b2) => a - b2);
+    syncYearSlider(false);
+  }
+  syncCrimeOptions();
+  recomputeScales();
+  render();
+  fitActiveLayer();
 }

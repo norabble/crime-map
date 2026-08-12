@@ -6,13 +6,15 @@
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { buildCounties, buildData } from './data';
+import { buildData } from './data';
 import { $, DATA } from './dom';
 import { esc } from './format';
 import { loadLocal } from './load';
 import { initMap } from './map';
+import { S } from './state';
+import { renderStatus, setStatus } from './status';
 import { initUI } from './ui';
-import type { CountiesDoc, GeoDoc, StatesDoc } from './types';
+import type { GeoDoc, StatesDoc } from './types';
 
 /* `bootStage` tracks how far boot got. Every step below runs inside one
    try, so without it a missing data file and a WebGL failure surface as
@@ -25,10 +27,12 @@ let bootStage = 'crime data';
 
 async function boot(): Promise<void> {
   const splashMsg = $('splashMsg');
+  renderStatus();
   try {
     // Everything below is served from <base>/data/, produced by the build
     // scripts. No API key, no rate limits, works offline once built.
     splashMsg.textContent = 'Loading crime data…';
+    setStatus('states', { kind: 'loading' });
     const states = await loadLocal<StatesDoc>(DATA('states.json'));
 
     bootStage = 'geometry';
@@ -38,18 +42,18 @@ async function boot(): Promise<void> {
     bootStage = 'joining datasets';
     splashMsg.textContent = 'Joining datasets…';
     buildData(states, geo);
+    setStatus('states', {
+      kind: 'ready',
+      detail: S.features.length + ' states, ' +
+        S.years[0] + '–' + S.years[S.years.length - 1],
+    });
 
-    // The county layer is optional — the build may legitimately not
-    // have it, so a missing file must not fail the whole boot.
-    try {
-      const [cGeo, cData] = await Promise.all([
-        loadLocal<GeoDoc>(DATA('geo-counties.json'), true),
-        loadLocal<CountiesDoc>(DATA('counties.json'), true),
-      ]);
-      if (cGeo && cData) buildCounties(cGeo, cData);
-    } catch (e) {
-      console.warn('county layer unavailable:', (e as Error).message);
-    }
+    /* The county layer is NOT fetched here. It is 4.3 MB gzipped against
+       460 KB for everything above, so loading it eagerly put first paint
+       behind the slowest request on the site - and when it failed, it
+       failed silently. counties.ts fetches it when the County button is
+       clicked, where a failure can be reported and retried. */
+    setStatus('counties', { kind: 'pending', detail: 'click County to load' });
 
     bootStage = 'rendering';
     splashMsg.textContent = 'Rendering…';
@@ -57,6 +61,7 @@ async function boot(): Promise<void> {
     initMap();
   } catch (err) {
     console.error('boot failed during stage:', bootStage, err);
+    setStatus('states', { kind: 'failed', detail: 'see message' });
     $('spinner').style.display = 'none';
     splashMsg.style.display = 'none';
     const e = $('splashErr');
