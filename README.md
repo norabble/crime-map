@@ -7,6 +7,8 @@ type, shaded on a gradient by **population density**.
 Data is downloaded once by the build scripts and baked into static JSON.
 The viewer then loads instantly, needs no API key, and works offline.
 
+**Live: https://norabble.github.io/crime-map/**
+
 ---
 
 ## Quick start

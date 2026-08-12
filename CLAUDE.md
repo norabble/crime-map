@@ -13,6 +13,32 @@ referenced from the viewer.
 Two toolchains, one boundary: Python builds the data, Node serves and
 builds the site. They meet at `data/*.json` and nowhere else.
 
+`data/*.json` is **committed** despite being a build artifact, because
+Pages has to serve it and CI cannot rebuild it — `counties.json` needs a
+Return A file placed in `.cache/bulk/` by hand from openICPSR 100707,
+behind an authenticated download. That trade is deliberate: it keeps the
+API key a local secret rather than a repository secret. Git is
+content-addressed, so rebuilding with identical output adds nothing to
+history.
+
+## This repository is public
+
+The threat model changed when it went public, and the old warnings were
+written for a different one.
+
+**Anything committed is world-readable, immediately and permanently, and
+so is every blob in history.** Previously, leaking `.env` took a
+misconfigured local server; now it takes one `git add -f`. The
+`.gitignore` entry is the whole defence. Before publishing, this was
+verified: `.env` has never been committed on any branch, the key appears
+in no reachable blob, and the only key-shaped string in the tree is the
+deliberately fake `SECRET` fixture in `tests/test_pipeline.py`.
+
+`make data` and `make states` stay local, keyed operations. Do not move
+the API key into GitHub Actions secrets to automate them — the openICPSR
+step cannot be automated anyway, so the only thing that would buy is a
+copy of the key in a second place.
+
 ## Commands
 
     npm run dev      http://127.0.0.1:8000/crime-map/
