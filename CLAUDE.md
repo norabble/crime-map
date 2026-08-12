@@ -5,29 +5,72 @@ rate; colour = population density.
 
 ## Architecture
 
-Data is a **build artifact**, not a runtime fetch. `scripts/` download
-and normalise into `data/*.json`; `viewer/index.html` only reads those
-files. The API key is build-time only and must never be referenced from
-the viewer.
+Data is a **build artifact**, not a runtime fetch. `scripts/` (Python)
+download and normalise into `data/*.json`; the viewer under `web/` only
+reads those files. The API key is build-time only and must never be
+referenced from the viewer.
+
+Two toolchains, one boundary: Python builds the data, Node serves and
+builds the site. They meet at `data/*.json` and nowhere else.
+
+`data/*.json` is **committed** despite being a build artifact, because
+Pages has to serve it and CI cannot rebuild it — `counties.json` needs a
+Return A file placed in `.cache/bulk/` by hand from openICPSR 100707,
+behind an authenticated download. That trade is deliberate: it keeps the
+API key a local secret rather than a repository secret. Git is
+content-addressed, so rebuilding with identical output adds nothing to
+history.
+
+## This repository is public
+
+The threat model changed when it went public, and the old warnings were
+written for a different one.
+
+**Anything committed is world-readable, immediately and permanently, and
+so is every blob in history.** Previously, leaking `.env` took a
+misconfigured local server; now it takes one `git add -f`. The
+`.gitignore` entry is the whole defence. Before publishing, this was
+verified: `.env` has never been committed on any branch, the key appears
+in no reachable blob, and the only key-shaped string in the tree is the
+deliberately fake `SECRET` fixture in `tests/test_pipeline.py`.
+
+`make data` and `make states` stay local, keyed operations. Do not move
+the API key into GitHub Actions secrets to automate them — the openICPSR
+step cannot be automated anyway, so the only thing that would buy is a
+copy of the key in a second place.
 
 ## Commands
 
-    make test        offline self-tests, no network or key needed
+    npm run dev      http://127.0.0.1:8000/crime-map/
+    npm run build    -> dist/  (what GitHub Pages serves)
+    npm test         vitest, viewer logic
+    npm run typecheck
+
+    make test        offline self-tests for the Python pipeline
     make data        full build (geometry + states)
-    make serve       http://localhost:8000
     make inspect     schema report for a bulk file in .cache/bulk/
     make import      national counties 1960-2024 from Return A
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
-`make serve` runs `scripts/serve.py`, which roots the server at `viewer/`
-and symlinks `data/` into it. Do not "fix" this by serving the repo root
-— that publishes `.env`. It exists instead of `python -m http.server`
-because that module binds every interface and sends no cache headers,
-and neither is settable from its CLI. Both replacements are load-bearing:
-loopback-only keeps an unbuilt-for-the-internet preview off the LAN, and
-`no-store` plus dropped conditional-GET headers is what stops you editing
-the viewer, reloading, and debugging the previous copy.
+`make serve` is a thin alias for `npm run dev`. There is no hand-written
+server here any more, and there should not be one again: the last one was
+single-threaded and stalled whenever a browser opened a preconnect socket
+("first load fails, reload works"), and its stated reason for existing was
+wrong anyway — `python -m http.server` has had `--bind` and `--directory`
+for years.
+
+**`server.fs.allow` in `vite.config.ts` is load-bearing.** Setting
+`root: 'web'` does *not* confine the dev server; a request for
+`/crime-map/../.git/config` resolves straight out of the web root and was
+served until `fs.allow` was narrowed. `.env` holds the API key and `.git`
+can hold credentials, so both are also in `fs.deny`. Verify with a
+traversal probe after touching that config, not by reading it.
+
+`npm run dev` and `npm run build` both run `scripts/sync-data.mjs` first,
+which copies `data/` into `web/public/data/`. A copy, not a symlink, so
+dev and build behave identically. Never edit `web/public/data/` — it is
+overwritten.
 
 Always run `make test` after touching `scripts/common.py` — the
 geometry and fold logic there is what silently corrupts output if wrong.
@@ -55,6 +98,33 @@ geometry and fold logic there is what silently corrupts output if wrong.
   builds too; `fetch_geometry.py` validates before accepting a source.
 - **Antimeridian.** Longitude deltas wrap to ±180 or Alaska's area is
   wrong by an order of magnitude.
+
+## The viewer must never fail silently
+
+Three bugs shared one cause: the viewer degraded invisibly, so "it's
+broken" and "it's fine" looked identical. Each fix has tests; all three
+were verified by reintroducing the bug and watching the suite go red.
+
+- **Boot never waits on the basemap.** Everything used to hang off
+  `map.on('load')`, which never fires if the cartocdn style stalls — the
+  splash then span forever, and a reload "fixed" it because the style was
+  cached. `map.ts` now starts on load *or* a watchdog, whichever comes
+  first, gated by `once()`. `interleaved:false` is what makes that legal:
+  deck draws to its own canvas and needs no loaded style. If the basemap
+  turns up late, the status flips back to ready by itself.
+- **`loadOptional` distinguishes absent from failed.** A 404 means the
+  build legitimately lacks that layer — stay quiet. Everything else means
+  it should have worked. The old single `optional` flag collapsed both to
+  `null`, which is why a failed 8.5 MB `counties.json` produced no signal
+  anywhere while the County button claimed no such dataset exists. Don't
+  reunify these.
+- **The county layer loads on click, not at boot.** It is 4.2 MB gzipped
+  against 0.45 MB for everything else; eager loading put first paint
+  behind the slowest request on the site. Tying it to a click is also what
+  makes a failure attributable, reportable and retryable.
+- **The Status panel is the contract.** Every layer is visibly working or
+  visibly not. `absent` is `warn`, never `bad` — an unbuilt layer is a
+  choice, and crying wolf about it teaches people to ignore the panel.
 
 ## Known-good reference values
 

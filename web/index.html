@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US Crime Rates per Capita — 3D Geographic Explorer</title>
+
+<!-- Content Security Policy. Place names reach this page from
+     data/geo-*.json, which fetch_geometry builds out of TopoJSON
+     downloaded from a CDN, so they are remote input by the time they are
+     rendered. This caps what a compromised dependency could reach:
+     default-src 'none' means a directive absent from this list is denied
+     outright.
+
+     script-src is now plain 'self'. The scripts used to come off a public
+     CDN under SRI, and the viewer's own logic lived in an inline block
+     that forced 'unsafe-inline'; both are gone since MapLibre, deck.gl and
+     src/ are bundled from npm into same-origin assets. That removes two
+     third-party script origins and the inline allowance in one go.
+
+     CSP is still NOT the primary defence against injected markup - escaping
+     at the point of interpolation is, see esc() in src/format.ts. What CSP
+     buys is that even a successful injection cannot phone home: connect-src
+     and img-src pin egress to this origin and the basemap.
+
+     style-src keeps 'unsafe-inline' for the <style> block below and for the
+     tags Vite injects for imported CSS during development.
+
+     blob: on worker-src and img-src is required by MapLibre, which builds
+     its tile workers and some textures from blobs. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: https://*.cartocdn.com;
+  connect-src 'self' https://*.cartocdn.com;
+  worker-src blob:;
+  child-src blob:;
+  object-src 'none';
+  base-uri 'none';
+  form-action 'none'
+" />
+
+<style>
+  :root{
+    --bg:#07090f;
+    --panel:rgba(15,19,30,.92);
+    --panel-solid:#0f131e;
+    --border:#242c40;
+    --text:#e8ecf5;
+    --muted:#8d97ad;
+    --accent:#f6c453;
+    --accent2:#4aa8d8;
+    --warn:#e8734a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden}
+  #map{position:absolute;inset:0}
+  canvas{outline:none}
+
+  /* ---------- panels ---------- */
+  .panel{
+    position:absolute;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 10px 40px rgba(0,0,0,.55);z-index:5;
+  }
+  #controls{top:14px;left:14px;width:310px;max-height:calc(100% - 28px);overflow-y:auto;padding:16px}
+  #ranking{top:14px;right:14px;width:250px;max-height:calc(100% - 28px);overflow-y:auto;padding:14px 16px}
+  #legend{bottom:14px;left:14px;width:310px;padding:14px 16px}
+
+  h1{font-size:14px;margin:0 0 3px;letter-spacing:.2px;font-weight:650}
+  .sub{font-size:10.5px;color:var(--muted);line-height:1.45;margin:0 0 14px}
+  h2{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);
+     margin:0 0 7px;font-weight:600}
+  .grp{margin-bottom:16px}
+  .grp:last-child{margin-bottom:0}
+
+  select,button,input[type=file]{font-family:inherit}
+  select{
+    width:100%;background:#161c2b;color:var(--text);border:1px solid var(--border);
+    border-radius:6px;padding:8px 9px;font-size:12.5px;cursor:pointer;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238d97ad'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  select:focus{outline:none;border-color:var(--accent2)}
+  select:disabled{opacity:.45;cursor:not-allowed}
+
+  .seg{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
+  .seg button{
+    background:#161c2b;color:var(--muted);border:1px solid var(--border);border-radius:6px;
+    padding:7px 4px;font-size:11px;cursor:pointer;transition:.13s;position:relative;
+  }
+  .seg button:hover:not(:disabled){background:#1c2437;color:var(--text);border-color:#3d4a66}
+  .seg button.on{background:var(--accent2);border-color:var(--accent2);color:#04121c;font-weight:600}
+  .seg button:disabled{opacity:.34;cursor:not-allowed}
+
+  .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .row .val{font-size:11.5px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:600}
+  input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:3px;
+    background:#2a3348;border-radius:2px;outline:none;margin:2px 0 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid #0f131e}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid #0f131e}
+
+  .swatch{height:9px;border-radius:3px;margin:5px 0 4px;background:#2a3348}
+  .now{font-size:9.5px;color:#6f798f;margin-top:4px;font-variant-numeric:tabular-nums}
+
+  /* era marker under the year slider */
+  .eraBar{position:relative;height:3px;background:#1b2233;border-radius:2px;margin:7px 0 3px}
+  .eraBar span{position:absolute;top:-3px;width:1px;height:9px;background:var(--warn);
+    box-shadow:0 0 5px var(--warn)}
+  .eraLbl{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  #eraSplit{color:var(--warn)}
+
+  /* api key block */
+  input[type=password],input[type=text].key{
+    width:100%;background:#161c2b;color:var(--text);border:1px solid var(--border);
+    border-radius:6px;padding:7px 9px;font-size:11.5px;font-family:inherit}
+  input[type=password]:focus,input[type=text].key:focus{outline:none;border-color:var(--accent2)}
+  .btn{width:100%;background:var(--accent2);color:#04121c;border:none;border-radius:6px;
+    padding:8px;font-size:11.5px;font-weight:650;cursor:pointer;margin-top:6px}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.sec{background:#1c2437;color:var(--muted);border:1px solid var(--border);font-weight:500}
+  .prog{height:3px;background:#1b2233;border-radius:2px;overflow:hidden;margin-top:8px}
+  .prog i{display:block;height:100%;background:var(--accent2);width:0;transition:width .2s}
+  .ok{color:#5fd39a}
+  .ends{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .bars{display:flex;align-items:flex-end;gap:3px;height:26px;margin:6px 0 4px}
+  .bars i{flex:1;background:linear-gradient(180deg,var(--accent2),#1d4a66);border-radius:1px 1px 0 0;display:block}
+
+  /* ranking list */
+  .rk{display:flex;align-items:center;gap:7px;padding:3.5px 0;font-size:11px;cursor:pointer;border-radius:4px}
+  .rk:hover{background:#1a2133}
+  .rk .n{width:15px;color:var(--muted);font-size:9.5px;text-align:right;flex:none}
+  .rk .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rk .v{font-variant-numeric:tabular-nums;color:var(--accent);font-size:10.5px;flex:none}
+
+  details{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+  summary{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);
+    cursor:pointer;font-weight:600;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary:before{content:"▸ ";display:inline-block;transition:.15s}
+  details[open] summary:before{transform:rotate(90deg)}
+  details p{font-size:10.5px;color:var(--muted);line-height:1.55;margin:9px 0 0}
+  details a{color:var(--accent2)}
+  .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:7px}
+  .note strong{color:var(--warn);font-weight:600}
+
+  /* status rows */
+  .st{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+    font-size:10.5px;padding:2.5px 0}
+  .st-n{color:var(--muted)}
+  .st-v{font-variant-numeric:tabular-nums;text-align:right}
+  .st-ok{color:#5fd39a}
+  .st-warn{color:var(--accent)}
+  .st-bad{color:var(--warn);font-weight:600}
+  .st-idle{color:#6f798f}
+
+  /* tooltip */
+  .tip{
+    position:absolute;z-index:20;pointer-events:none;background:#0d111b;
+    border:1px solid var(--border);border-radius:8px;padding:11px 13px;font-size:11.5px;
+    box-shadow:0 8px 30px rgba(0,0,0,.7);max-width:250px;display:none;line-height:1.5
+  }
+  .tip .t{font-size:13px;font-weight:650;margin-bottom:7px}
+  .tip .l{display:flex;justify-content:space-between;gap:14px;color:var(--muted)}
+  .tip .l b{color:var(--text);font-variant-numeric:tabular-nums;font-weight:600}
+  .tip .hr{height:1px;background:var(--border);margin:7px 0}
+
+  /* loading / error */
+  #splash{position:absolute;inset:0;z-index:50;background:var(--bg);display:flex;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;transition:opacity .4s}
+  #splash.hide{opacity:0;pointer-events:none}
+  .spin{width:26px;height:26px;border:2px solid #232b3e;border-top-color:var(--accent);
+    border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #splashMsg{font-size:12px;color:var(--muted)}
+  #splashErr{max-width:460px;text-align:center;font-size:12px;line-height:1.6;color:var(--warn);display:none}
+
+  @media (max-width:900px){
+    #ranking{display:none}
+    #controls{width:270px}
+    #legend{width:270px}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="tip" id="tip"></div>
+
+<!-- ───────────── CONTROLS ───────────── -->
+<div class="panel" id="controls">
+  <h1>Crime Rates per Capita</h1>
+  <p class="sub">Extruded height = reported offenses per 100,000 residents.
+     Surface colour = population density. FBI Uniform Crime Reports.</p>
+
+  <div class="grp">
+    <h2>Geographic area</h2>
+    <div class="seg" id="geoSeg">
+      <button data-geo="state" class="on">State</button>
+      <button data-geo="county" title="Loads the county layer (4.3 MB) on first use">County</button>
+      <button data-geo="zip" disabled title="ZIP-level crime data does not exist nationally — see Data notes">ZIP code</button>
+      <button data-geo="tract" disabled title="Census-tract crime data does not exist nationally — see Data notes">Census tract</button>
+    </div>
+    <div class="note">County data is fetched on first click — it is larger than
+      everything else combined. If it fails, <em>Status</em> below says so and
+      clicking again retries. ZIP and census tract have no nationwide source at
+      all; see <em>Data notes</em>.</div>
+  </div>
+
+  <div class="grp">
+    <h2>Crime type</h2>
+    <select id="crime"></select>
+  </div>
+
+  <div class="grp">
+    <div class="row"><h2 style="margin:0">Year</h2><span class="val" id="yearVal">2019</span></div>
+    <input type="range" id="year" min="1960" max="2019" value="2019" step="1" />
+    <div class="eraBar"><span id="eraMark"></span></div>
+    <div class="eraLbl">
+      <span>1960</span>
+      <span id="eraSplit">SRS ▏NIBRS</span>
+      <span id="eraEnd">2019</span>
+    </div>
+    <div class="note" id="eraWarn" style="display:none"></div>
+  </div>
+
+
+  <div class="grp">
+    <div class="row"><h2 style="margin:0">Height exaggeration</h2><span class="val" id="exagVal">1.0×</span></div>
+    <input type="range" id="exag" min="0.15" max="3" value="1" step="0.05" />
+  </div>
+
+  <div class="grp">
+    <div class="row"><h2 style="margin:0">Fade below</h2><span class="val" id="fadeVal">off</span></div>
+    <input type="range" id="fade" min="0" max="0.9" value="0" step="0.01" />
+    <div class="note">Dims everything shorter than this so the tall units stand
+      out. Measured against the fixed scale, so it does not drift with the year
+      or with height exaggeration.</div>
+  </div>
+
+  <div class="grp">
+    <h2>Height shows</h2>
+    <div class="seg">
+      <button id="encRate" class="on" title="Pillar height is the crime rate; colour is population density">Crime rate</button>
+      <button id="encDens" title="Pillar height is population density; colour is the crime rate">Density</button>
+    </div>
+    <div class="note" id="encNote"></div>
+  </div>
+
+  <div class="grp">
+    <h2>Crime rate scale</h2>
+    <div class="seg">
+      <button id="scNorm" class="on" title="Full scale = the highest rate this crime type ever reaches, in any unit, in any year">Per crime type</button>
+      <button id="scAbs" title="Full scale = the highest rate any crime type reaches — lets you compare magnitudes, but rare crimes look flat">Absolute</button>
+    </div>
+    <div class="note">Both are fixed across all years, so the year slider shows real change.</div>
+  </div>
+
+  <div class="grp">
+    <h2>Density colours</h2>
+    <select id="palette"></select>
+    <div class="note" id="paletteNote"></div>
+  </div>
+
+  <details>
+    <summary>Data notes &amp; caveats</summary>
+    <p><b>Sources.</b> <em>1960–2019:</em> FBI Summary Reporting System state totals via the
+       <a href="https://corgis-edu.github.io/corgis/csv/state_crime/" target="_blank" rel="noopener">CORGIS
+       State Crime dataset</a>. <em>2020 onward:</em> pulled live from the
+       <a href="https://cde.ucr.cjis.gov/" target="_blank" rel="noopener">FBI Crime Data Explorer</a>
+       API. Rates are reported offences per 100,000 residents.</p>
+    <p><b>The 2019/2020 seam is real.</b> The two eras are different collection systems
+       (SRS vs NIBRS). Monthly CDE counts are summed to annual totals and divided by that
+       year's population; years without all 12 months reported are omitted entirely rather
+       than shown as a partial-year collapse. Treat cross-boundary comparisons with care.</p>
+    <p><b>Reporting coverage.</b> NIBRS adoption caused a sharp drop in participating
+       agencies — nationally about 75–79% of the population was covered in 2021, against
+       ~96% by 2023. States below 80% coverage are drawn de-saturated and semi-transparent,
+       with the exact figure on hover. A short pillar in those years may mean under-reporting
+       rather than less crime.</p>
+    <p><b>County view.</b> Built by summing the counts individual police agencies reported,
+       from <a href="https://www.openicpsr.org/openicpsr/project/100707" target="_blank" rel="noopener">UCR
+       Offenses Known and Clearances by Arrest (Return A)</a>, 1960–2024. That construction
+       carries real hazards, which is why each county-year shows the share of its population
+       that actually reported: city police and county sheriffs operate in the same county;
+       an agency that reported nothing looks identical to one with no crime; and agencies
+       that straddle county lines or serve no single county — state police, multi-county
+       districts — are excluded entirely. See
+       <a href="https://ucrbook.com/county-level-data.html" target="_blank" rel="noopener">Kaplan
+       on county-level data</a> before drawing conclusions from a single county.</p>
+    <p><b>What the county layer excludes.</b> An agency-year without all twelve months
+       reported is dropped rather than summed, because a part-year total renders as a crash
+       that never happened. Across 1960–2024 that removes about 337,000 agency-years.
+       Aggravated assault is the aggravated count only — the Return A "total" column bundles
+       simple assault, which is roughly ten times larger.</p>
+    <p><b>Why not ZIP or census tract?</b> ZIP and census-tract selectors are disabled
+       because no public nationwide dataset carries this offence breakdown at those levels —
+       they are published city-by-city, never nationally.</p>
+    <p><b>Rape definition change.</b> The UCR revised its rape definition in 2013. Figures
+       before and after that year are not directly comparable.</p>
+    <p><b>Voluntary reporting.</b> Agencies report to the UCR voluntarily. Coverage varies
+       by state and year, and a low number can mean low crime <em>or</em> low reporting.
+       Earlier years are considerably less complete.</p>
+    <p><b>Population density</b> is computed from each state's true spherical land+water
+       polygon area, so it will differ slightly from Census land-only density figures.</p>
+  </details>
+
+  <div class="grp" style="margin-top:14px">
+    <h2>Status</h2>
+    <div id="statusList"></div>
+    <div class="note">What is actually loaded right now. A layer that fails
+      says so here rather than just not appearing.</div>
+  </div>
+</div>
+
+<!-- ───────────── RANKING ───────────── -->
+<div class="panel" id="ranking">
+  <h2 id="rkTitle">Highest rates</h2>
+  <div id="rkList"></div>
+</div>
+
+<!-- ───────────── LEGEND ───────────── -->
+<div class="panel" id="legend">
+  <h2 id="lgHtitle">Height — <span id="lgCrime">violent crime</span> per 100k</h2>
+  <div class="bars" id="lgBars"></div>
+  <div class="ends"><span id="lgHmin">0</span><span id="lgHmax">—</span></div>
+  <div class="now" id="lgHnow">—</div>
+  <h2 style="margin-top:13px" id="lgCtitle">Colour — population per sq mile</h2>
+  <div class="swatch" id="lgSwatch"></div>
+  <div class="ends"><span id="lgCmin">—</span><span id="lgCmax">—</span></div>
+  <div class="now" id="lgFixed">Fixed across all years</div>
+</div>
+
+<!-- ───────────── SPLASH ───────────── -->
+<div id="splash">
+  <div class="spin" id="spinner"></div>
+  <div id="splashMsg">Loading libraries…</div>
+  <div id="splashErr"></div>
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

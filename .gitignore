@@ -1,13 +1,30 @@
-# Generated data - rebuild with `make data`
-data/*.json
+# data/*.json IS committed. It is a build artifact, but GitHub Pages has to
+# serve it and CI cannot rebuild it: counties.json comes from openICPSR
+# 100707 via a Return A file placed in .cache/bulk/ by hand, behind an
+# authenticated download. Committing it is what keeps the API key a local,
+# build-time secret instead of a repository secret.
+#
+# Git is content-addressed, so re-running `make data` with identical output
+# adds nothing; history grows only on a genuine refresh.
 
-# Serve-time symlink into data/, created by `make serve`
-viewer/data
+# Vite's copy of data/, refreshed by scripts/sync-data.mjs before dev and
+# before build. Never edit here - data/ is the source.
+web/public/data/
+
+# Node toolchain and build output
+node_modules/
+dist/
 
 # Download cache (can be large; safe to delete)
 .cache/
 
-# Secrets
+# Secrets.
+#
+# This repository is public and everything committed to it is served by
+# GitHub Pages, so this line is now the only thing between the API key and
+# the internet. It used to take a misconfigured local server to leak .env;
+# now it takes one `git add -f`. Do not add an exception here, and do not
+# rename .env to something this pattern misses.
 .env
 
 __pycache__/

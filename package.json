@@ -1,0 +1,28 @@
+{
+  "name": "crime-map",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive 3D map of FBI crime data",
+  "scripts": {
+    "predev": "node scripts/sync-data.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/sync-data.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.3.10",
+    "@deck.gl/layers": "^9.3.10",
+    "@deck.gl/mapbox": "^9.3.10",
+    "maplibre-gl": "^4.7.1"
+  }
+}

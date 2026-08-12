@@ -1,0 +1,95 @@
+name: Deploy to GitHub Pages
+
+# The site is a static build of web/ plus the committed data/*.json.
+#
+# Nothing here rebuilds the data. counties.json comes from openICPSR 100707
+# via a Return A file placed in .cache/bulk/ by hand, which is behind an
+# authenticated download that no workflow can fetch - so data/ is committed
+# and CI only ever reads it. `make data` stays a local, keyed operation and
+# the API key never becomes a repository secret.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue instead of cancelling, so a run that is
+# already publishing finishes rather than leaving the site half-updated.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The gate, not decoration. These are the same checks run locally and
+      # a red one should stop a deploy rather than publish over it.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test the viewer
+        run: npm test
+
+      - name: Test the Python pipeline
+        run: make test
+
+      # vite.config.ts hardcodes base:'/crime-map/' because Project Pages
+      # serve from /<repo>/. Renaming the repository silently breaks every
+      # asset and data URL, and the failure looks like a blank page rather
+      # than an error, so assert the two agree before building.
+      - name: Check the Pages base matches the repository name
+        run: |
+          expected="/${GITHUB_REPOSITORY#*/}/"
+          actual=$(grep -oE "base: *'[^']*'" vite.config.ts | head -1 | cut -d"'" -f2)
+          echo "repository implies $expected; vite.config.ts declares $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::base mismatch - update base in vite.config.ts to $expected"
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build
+
+      # A build that quietly shipped without the data would look fine here
+      # and fail only in a browser, so check the payload exists.
+      - name: Verify the artifact
+        run: |
+          for f in states.json geo-states.json geo-counties.json counties.json; do
+            test -s "dist/data/$f" || { echo "::error::dist/data/$f missing or empty"; exit 1; }
+          done
+          if find dist -name '.env*' -o -name '*.py' | grep -q .; then
+            echo "::error::dist contains files that must not be published"
+            exit 1
+          fi
+          du -sh dist
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
