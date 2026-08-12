@@ -15,11 +15,12 @@ The viewer then loads instantly, needs no API key, and works offline.
 make setup                     # creates .env from the template
 # paste a free key into .env  →  https://api.data.gov/signup/
 make data                      # downloads + builds (~5 min cold)
-make serve                     # http://localhost:8000
+npm install                    # one-time, for the viewer toolchain
+npm run dev                    # http://127.0.0.1:8000/crime-map/
 ```
 
-`make test` runs the offline self-tests at any point; it needs no
-network and no key.
+Two test suites, both offline and neither needing a key: `make test`
+covers the Python pipeline, `npm test` covers the viewer.
 
 ### Why a key is needed
 
@@ -243,16 +244,25 @@ scripts/
   inspect_bulk.py        read-only schema report for a bulk download
   import_bulk.py         Return A bulk file -> data/counties.json
   build_counties.py      agency -> county aggregation
+  sync-data.mjs          copies data/ into web/public/data before dev/build
 tests/
-  test_pipeline.py       offline self-tests, no network
-viewer/
-  index.html             the map; loads ../data/*.json
+  test_pipeline.py       offline self-tests for the Python pipeline
+web/
+  index.html             markup, styles and the entry <script>
+  src/                   the viewer, as TypeScript modules
+    main.ts              boot
+    data.ts              joins data/*.json into the render stores
+    render.ts            deck.gl layer construction
+    scales.ts            colour ramps, fixed domains, fade threshold
+    *.test.ts            vitest, run with npm test
 ```
 
 The viewer needs to be **served**, not opened as a file — browsers block
-local file reads from `file://` origins. `make serve` handles it. It
-still pulls deck.gl and MapLibre from a CDN at runtime; to go fully
-offline, vendor those two into `viewer/`.
+local file reads from `file://` origins. `npm run dev` handles it.
+
+deck.gl and MapLibre are npm dependencies bundled into the build, not CDN
+script tags, so the only host contacted at runtime is the basemap
+(`basemaps.cartocdn.com`). Everything else is same-origin.
 
 ---
 
