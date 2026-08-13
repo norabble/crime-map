@@ -18,6 +18,25 @@ export const SRS_LAST = 2019;      // last year of Summary Reporting System data
 export const NIBRS_FIRST = 2020;   // first year pulled from the CDE API
 export const COVERAGE_MIN = 80;    // below this %, a unit-year is flagged unreliable
 
+/* Above this share of estimated offences, a unit-year is marked as an
+   estimate rather than a measurement.
+
+   This is a SEPARATE reading from coverage and the two do not imply each
+   other. Coverage says how much of the population filed; `imp` says how
+   much of the number on screen nobody filed at all. A county with no
+   coverage and no estimate is absent; one with no coverage and a full set
+   of estimates is drawn, at full height, and must not be mistaken for a
+   measured one. Half is the threshold because below it the filed majority
+   still carries the figure. */
+export const ESTIMATED_MIN = 0.5;
+
+/* Estimated unit-years are hatched toward this violet rather than being
+   greyed: grey is already spoken for by low coverage, and the two land on
+   the same unit constantly — a county nobody filed for has cov 0 AND imp 1.
+   Distinct hue, so the two readings stay separable. */
+export const ESTIMATED_RGB: RGB = [138, 120, 214];
+export const ESTIMATED_MIX = 0.5;
+
 export const MAX_HEIGHT_M = 420000; // metres at exaggeration 1.0
 
 /* Faded pillars sink toward this dark blue-grey and drop to this alpha.

@@ -1,4 +1,4 @@
-import { COVERAGE_MIN, CRIMES, SRS_LAST } from './config';
+import { COVERAGE_MIN, CRIMES, ESTIMATED_MIN, SRS_LAST } from './config';
 import { S } from './state';
 import type {
   CountiesDoc, CountyRec, Feat, GeoDoc, RawRec, Rec, Row, StatesDoc, Store, YearMap,
@@ -36,6 +36,9 @@ export function buildData(statesDoc: StatesDoc | null, geoDoc: GeoDoc | null): v
       byYear.set(yr, {
         pop: rec.pop,
         cov: (rec.cov === undefined ? null : rec.cov),
+        // The state layer comes from the CDE API and carries no estimates
+        // of its own; null means "not applicable here", not "zero".
+        imp: (rec.imp === undefined ? null : rec.imp),
         src: rec.src || 'SRS',
         rates: rec.rates || {},
         totals: rec.totals || {},
@@ -95,12 +98,14 @@ export function decodeCountyRec(
   year: number,
   compact: boolean,
   order: string[],
+  record?: string[],
 ): Rec {
   if (!compact) {
     const r = rec as RawRec & { agencies?: number; reporting?: number };
     return {
       pop: r.pop,
       cov: (r.cov === undefined ? null : r.cov),
+      imp: (r.imp === undefined ? null : r.imp),
       src: r.src || 'NIBRS',
       rates: r.rates || {},
       totals: r.totals || {},
@@ -109,11 +114,23 @@ export function decodeCountyRec(
     };
   }
   const arr = rec as number[];
-  const pop = arr[0], cov = arr[1];
+  // Slot positions come from meta.record, never from a constant. compact-1
+  // was [pop, cov, ...totals] and compact-2 inserts `imp` in front of the
+  // totals; reading a fixed offset would silently relabel every offence in
+  // the file the next time a field is added.
+  const slots = record && record.length ? record : ['pop', 'cov'].concat(order);
+  const first = slots.length - order.length;
+  const at = (name: string): number | undefined => {
+    const i = slots.indexOf(name);
+    return i < 0 ? undefined : arr[i];
+  };
+  const pop = at('pop') ?? 0;
+  const cov = at('cov');
+  const imp = at('imp');
   const totals: Record<string, number> = {};
   const rates: Record<string, number> = {};
   for (let i = 0; i < order.length; i++) {
-    const v = arr[2 + i];
+    const v = arr[first + i];
     if (v === undefined || v === null) continue;
     totals[order[i]] = v;
     // Rates are derived here rather than stored: they are the larger
@@ -123,6 +140,7 @@ export function decodeCountyRec(
   return {
     pop,
     cov: (cov === undefined ? null : cov),
+    imp: (imp === undefined ? null : imp),
     // Return A spans both collection systems; the seam is the same one
     // the state layer marks at 2019/2020.
     src: year > SRS_LAST ? 'NIBRS' : 'SRS',
@@ -142,22 +160,29 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
   let matched = 0;
 
   const meta = (dataDoc && dataDoc.meta) || {};
-  const compact = meta.format === 'compact-1';
+  const compact = !!meta.format && meta.format.indexOf('compact-') === 0;
   const order = meta.crimeOrder || [];
+  const record = meta.record;
+  const merged = meta.merged || {};
+  const unmatched: string[] = [];
 
   for (const fips in counties) {
     const g = geoDoc[fips];
-    if (!g) continue;
+    if (!g) { unmatched.push(fips); continue; }
     const byYear: YearMap = new Map();
     for (const ys in counties[fips]) {
-      byYear.set(+ys, decodeCountyRec(counties[fips][ys], +ys, compact, order));
+      byYear.set(+ys, decodeCountyRec(counties[fips][ys], +ys, compact, order, record));
     }
     S.countyData.set(fips, byYear);
+    // Merged units are already whole places — "New York City County" would
+    // be nonsense, and so would "Puerto Rico County".
+    const label = merged[fips] || g.name || fips;
     S.countyFeatures.push({
       type: 'Feature',
       geometry: g.geometry,
       props: {
-        name: g.name + (g.name!.match(/(County|Parish|Borough|city|Area)$/) ? '' : ' County'),
+        name: merged[fips] ? label
+          : label + (label.match(/(County|Parish|Borough|city|Area)$/) ? '' : ' County'),
         areaSqMi: g.area_sq_mi,
         fips,
       },
@@ -165,7 +190,17 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
     matched++;
   }
 
+  S.countyUnmatched = unmatched.length;
   S.hasCounties = matched > 0;
+  // A county key with no geometry is data that will never be drawn, and it
+  // used to vanish here without a word: 17 years of Oglala Lakota and 64 of
+  // Bedford City went missing behind a bare `continue`. fips.py should keep
+  // this at zero, but a silent detector is how the next boundary change
+  // hides too, so it is counted and surfaced through the Status panel.
+  if (unmatched.length) {
+    console.warn('County data with no geometry (' + unmatched.length + '): ' +
+      unmatched.slice(0, 12).join(', ') + (unmatched.length > 12 ? '…' : ''));
+  }
   // No DOM here. Whether the button is usable and what it says is the UI
   // layer's business (see counties.ts and status.ts) - this function's job
   // is the join, and keeping it DOM-free keeps it testable.
@@ -230,11 +265,13 @@ export function currentValues() {
       ? rec.dens!
       : ((isFinite(pop) && f.props.areaSqMi > 0) ? pop / f.props.areaSqMi : NaN);
     const cov = rec ? rec.cov : null;
+    const imp = rec ? rec.imp : null;
     const src = rec ? rec.src : null;
     const lowCov = (cov != null && cov < COVERAGE_MIN);
+    const estimated = (imp != null && imp >= ESTIMATED_MIN);
 
     if (isFinite(rate) && rate > maxRate) maxRate = rate;
-    out.push({ f, rate, total, pop, dens, cov, src, lowCov });
+    out.push({ f, rate, total, pop, dens, cov, imp, src, lowCov, estimated });
   }
   return { def, rows: out, maxRate };
 }

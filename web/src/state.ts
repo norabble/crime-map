@@ -21,6 +21,9 @@ export interface AppState {
   hasCounties: boolean;
   countyData: Store | null;
   countyFeatures: Feat[];
+  /** County keys in the data with no matching geometry — data that will
+      never be drawn. Should be zero; surfaced so it cannot hide. */
+  countyUnmatched: number;
   /** GeoJSON features, each with .props (joined data). */
   features: Feat[];
   /* Unified store, both eras merged:
@@ -61,6 +64,7 @@ export const S: AppState = {
   hasCounties: false,
   countyData: null,
   countyFeatures: [],
+  countyUnmatched: 0,
   features: [],
   data: new Map(),
   years: [],

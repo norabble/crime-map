@@ -197,25 +197,70 @@ offence counts. A clearance is an arrest, not a crime.
 
 ### How the county figures are built
 
-Agencies are summed into the county named by `fips_state_county_code`,
-which joins directly onto `geo-counties.json`. Population is summed over
-**every** agency in the county, reported or not, so rates use total
-population as the FBI does; under-reporting surfaces as `cov` rather than
-being corrected by shrinking the denominator.
+Population is summed over **every** agency in the county, reported or
+not, so rates use total population as the FBI does; under-reporting
+surfaces as `cov` rather than being corrected by shrinking the
+denominator.
 
-Excluded, and counted in `meta.dropped`:
+Agencies are placed by `fips_state_county_code`, with three corrections
+the file supports and an earlier build ignored:
 
-- **~337,000 agency-years without all twelve months reported.** The
-  twelve-month rule from `fold_monthly` carried over — a part-year total
-  renders as a crash that never happened.
-- **~28,000 agency-years with no single county** (state police,
-  multi-county districts). They cannot be placed, so they are left out of
-  numerator and denominator alike rather than distorting one.
-- **County-years where no agency filed a complete year** are omitted, not
-  drawn as zero crime.
+- **Agencies spanning counties** are split by population share, using
+  `population_1/2/3` and `population_1/2/3_county`. That last column is
+  UCR's own sequential county number, not FIPS — Jefferson AL is UCR 37
+  and FIPS 073 — and the crosswalk between them is derived from the file
+  itself rather than guessed.
+- **Agencies whose crime is filed by a parent** (`covered_by_ori`) count
+  as covered, not as missing. They report zero months, so treating them
+  as non-reporting understated coverage for about 5 million people in
+  2023 alone.
+- **Agencies with no county of their own** — state police, multi-county
+  districts — are placed rather than discarded. Where they name the
+  agencies they file for, those counties are exact; otherwise they are
+  spread over the population each county did *not* cover with a local
+  agency, which is who a state force serves. Dropping them had Alaska's
+  counties summing to 63% of the state's population, inflating every
+  Alaskan rate by about 1.6x.
 
-About **20% of county-years fall below 80% coverage** and are drawn
-de-saturated.
+`violent` and `property` are summed from their components rather than
+read from the file's index columns, which disagreed with their own parts
+in 18% of county-years.
+
+### Estimated figures, and how to tell
+
+Roughly 337,000 agency-years were never filed in full. They are now
+estimated rather than dropped, in three tiers — scaling a part-year to
+twelve months, filling from the agency's own neighbouring years, and
+failing those, borrowing from agencies of the same type and size in the
+same state and year. For 1960–2019 the estimates are then **calibrated**
+so that filed + estimated equals the FBI's published state total.
+
+This is a deliberate change of policy. Earlier builds refused to
+fabricate any figure the FBI never published. The rule now is narrower
+and, we think, more useful: **nothing is fabricated invisibly.**
+
+- `cov` — share of population whose agency filed a full year. Unchanged
+  in meaning, and never used to rescale a rate.
+- `imp` — share of the offences on screen that nobody filed for that
+  county.
+
+The two are independent. A county nobody reported for has `cov` 0 and
+`imp` 1; it is drawn at full height, tinted violet, and says so in the
+tooltip. About **25% of county-years fall below 80% coverage** and are
+drawn de-saturated; about **14% are majority estimated**.
+
+Calibration is **not** applied from 2020 on. There, `states.json` carries
+a participation sum rather than an FBI estimate — California 2021 covers
+26% of the state — so anchoring to it would assert a known undercount as
+ground truth. Those years keep their uncalibrated estimates, and
+`make validate` reports them separately.
+
+`make validate` checks all of this against the defects that shipped
+before, and reports the calibration factor `k` per state-year-crime.
+Where `k` would exceed 5 it is capped and the remainder left
+unallocated: Illinois' published burglary totals sit far above anything
+its agencies filed, and closing that gap by scaling a few small
+departments would put Chicago's crime on small towns.
 
 ### Sanity check
 
@@ -245,14 +290,36 @@ recommends against using these aggregates at all. The specific hazards:
   in the same county. UCR assigns population to the most local agency
   and zero to the overlapping one, so summing works — but only if every
   agency reports.
-- **Non-reporting is indistinguishable from zero crime.** Coverage is
-  the only defence, and it varies far more by county than by state.
-- **Agencies straddle county lines.** State police, university police
-  and multi-county districts get assigned to one county.
+- **Non-reporting is indistinguishable from zero crime.** This is what
+  `cov` and `imp` exist to separate, and neither is a substitute for
+  knowing that the underlying figure was never filed.
+- **Agencies straddle county lines.** Split by population share where
+  the file records the split; a single-county agency in the wrong county
+  stays in the wrong county.
 
-The pipeline records `cov` per county-year and the viewer de-saturates
-anything under 80%. Counties with no reporting agency are omitted rather
-than drawn as zero.
+Two places are drawn as one unit because one agency reports for all of
+them, and no honest split exists: **New York City** (NYPD files one
+return for 8.2 million people across five counties — attributed to
+Manhattan, it made that pillar carry all five boroughs while the other
+four sat empty in every year) and **Puerto Rico**. American Samoa, Guam,
+the Northern Marianas and the US Virgin Islands have between 8 and 88
+agency-years each across the whole 65-year span, and are not drawn at
+all rather than left as a dozen permanent holes.
+
+**Puerto Rico's figures after 2020 are not trustworthy.** Its agencies
+file twelve months and report almost nothing — 466 violent offences for
+3.2 million people in 2023, against 6,479 in 2019. Neither defence
+catches it: the implausible-collapse check compares an agency against its
+own neighbouring years and the collapse is sustained across all of them,
+and PR has no published state total to calibrate against. It is shown as
+filed, and it is wrong. The same entry is used for State and County mode,
+so at least the two agree.
+
+County codes are mapped onto current geometry — Shannon SD to Oglala
+Lakota, Bedford City VA into Bedford County, and four more. The viewer
+used to drop any county key with no polygon without a word, which is how
+17 years of one and 64 of the other went missing; it now counts them and
+says so in the Status panel.
 
 In the bulk import, agencies are placed by the **county FIPS the file
 already carries**, so no geocoding is involved and nothing is inferred.

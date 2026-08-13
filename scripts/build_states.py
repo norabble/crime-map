@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import sys
 from pathlib import Path
 
@@ -179,13 +180,71 @@ def summarise(merged: dict) -> dict:
     }
 
 
+def territories_from_counties() -> dict:
+    """State-layer entries for places the CDE has no state figures for.
+
+    Puerto Rico is in the geometry and in Return A, but not in the CDE
+    state series, so State mode drew it as a permanent hole while County
+    mode had 3.2 million people in it. Rather than a second source, the
+    entry is read straight back off the county layer's own merged unit -
+    one code path, so the two modes cannot disagree about the number.
+
+    Requires data/counties.json, which is why this is a separate,
+    keyless step: `make states` needs an API key, and this does not.
+    """
+    path = DATA / "counties.json"
+    if not path.exists():
+        warn("No counties.json - skipping territory entries")
+        return {}
+    doc = json.loads(path.read_text())
+    ix = {name: i for i, name in enumerate(doc["meta"]["record"])}
+    order = doc["meta"]["crimeOrder"]
+    out: dict = {}
+    for key, name in (doc["meta"].get("merged") or {}).items():
+        # Only whole-territory merges belong in the state layer. New York
+        # City is a merged county unit, not a state.
+        if key not in ("72999",):
+            continue
+        by_year = {}
+        for y, r in doc["counties"].get(key, {}).items():
+            pop = r[ix["pop"]]
+            if pop <= 0:
+                continue
+            totals = {c: r[ix[c]] for c in order}
+            by_year[y] = {
+                "pop": pop,
+                "cov": r[ix["cov"]],
+                "imp": r[ix["imp"]] if "imp" in ix else 0,
+                "src": "NIBRS" if int(y) > SRS_LAST else "SRS",
+                "rates": {c: round(v / pop * 100000, 3) for c, v in totals.items()},
+                "totals": totals,
+            }
+        if by_year:
+            out[name] = dict(sorted(by_year.items()))
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-nibrs", action="store_true",
                     help="skip the API pull; build SRS 1960-2019 only")
     ap.add_argument("--refresh", action="store_true",
                     help="ignore the on-disk cache and refetch")
+    ap.add_argument("--territories-only", action="store_true",
+                    help="add territory entries to an existing states.json "
+                         "from the county layer; no API key needed")
     args = ap.parse_args()
+
+    if args.territories_only:
+        out = DATA / "states.json"
+        payload = json.loads(out.read_text())
+        extra = territories_from_counties()
+        payload["states"].update(extra)
+        payload["states"] = dict(sorted(payload["states"].items()))
+        write_json(out, payload)
+        step("Added %d territory entries: %s"
+             % (len(extra), ", ".join(extra) or "none"))
+        return
 
     merged = load_srs(args.refresh)
     if not args.no_nibrs:

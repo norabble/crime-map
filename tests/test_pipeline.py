@@ -210,6 +210,182 @@ ok(_norm_county("DeKalb") == "dekalb", "plain names pass through")
 ok(_norm_county("") == "", "empty string safe")
 ok(_norm_county(None) == "", "None safe")
 
+section("county identity: renames, merges, territories")
+from fips import canonical, merged_name, merged_parts  # noqa: E402
+ok(canonical("50001") == "50001", "an ordinary county passes through")
+ok(canonical("46113") == "46102", "Shannon SD renamed to Oglala Lakota")
+ok(canonical("51515") == "51019", "Bedford City folded into Bedford County")
+ok(canonical("57999") is None, "a code that is not a county is dropped")
+ok(canonical("66010") is None, "Guam is not served")
+ok(canonical("36061") == "36998" and canonical("36047") == "36998",
+   "every NYC borough resolves to one unit")
+ok(canonical("72127") == "72999", "any PR municipio resolves to one unit")
+ok(canonical("2020") == "02020", "a 4-digit code is zero-padded, not discarded")
+ok(canonical(None) is None and canonical("") is None, "empty input safe")
+ok(merged_name("36998") == "New York City", "merged units are named")
+# The state-prefix merge selects on a prefix its own key shares, so a
+# second pass over already-merged geometry must not dissolve it again.
+parts = merged_parts({"72001", "72003", "72999", "36998", "50001"})
+ok("72999" not in parts.get("72999", []), "a merged unit is not a part of itself")
+ok(sorted(parts["72999"]) == ["72001", "72003"], "PR parts are its municipios")
+ok("36998" not in parts, "a merge with no remaining parts is not re-run")
+
+section("aggregation: coverage, splits and county-less agencies")
+from aggregate import C0, EST, POP, REP, aggregate, totals_for  # noqa: E402
+from returna import BASE_CRIMES, AgencyTable  # noqa: E402
+
+
+def mk_table(rows):
+    """rows: (ori, year, fips, pop, months, cover_ori, {crime: n})"""
+    t = AgencyTable()
+    for ori, year, fips, pop, months, cover, counts in rows:
+        t.ori.append(t.oris.index(ori))
+        t.year.append(year)
+        t.state.append(t.states.index("teststate"))
+        t.atype.append(t.types.index("local police department"))
+        t.group.append(t.groups.index("band"))
+        t.pop.append(pop)
+        t.months.append(months)
+        for k, cid in enumerate(BASE_CRIMES):
+            t.counts[k].append(counts.get(cid, 0))
+        t.cty.append(t.counties.index(fips) if fips else -1)
+        t.wgt.append(1.0)
+        t._cover_raw.append(cover or "")
+    for cb in t._cover_raw:
+        t.cover.append(t.oris.get(cb) if cb else -1)
+    t._cover_raw = []
+    return t
+
+
+# A covered agency's crime is inside its parent's row. Counting it as
+# non-reporting is what drove ~5 million people's coverage to zero and
+# produced counties at cov 0 whose crime was filed all along.
+t = mk_table([
+    ("parent", 2023, "10001", 8000, 12, None, {"murder": 4}),
+    ("child",  2023, "10001", 2000,  0, "parent", {}),
+])
+acc, st = aggregate(t)
+r = acc[(t.counties.get("10001"), 2023)]
+ok(r[POP] == 10000, "a covered agency's population counts in the denominator")
+ok(r[REP] == 10000, "and in the reporting share, so coverage reads 100%")
+ok(totals_for(r)["murder"] == 4, "but adds no counts of its own - no double count")
+ok(st["covered"] == 1, "and is reported as covered rather than missing")
+
+# The same child with a parent that did NOT report is genuinely missing.
+t = mk_table([
+    ("parent", 2023, "10001", 8000, 0, None, {}),
+    ("child",  2023, "10001", 2000, 0, "parent", {}),
+])
+acc, st = aggregate(t)
+ok(acc[(t.counties.get("10001"), 2023)][REP] == 0,
+   "a covered agency whose parent filed nothing is not covered")
+
+# An agency with no county of its own is spread over the population its
+# state's counties did not cover - not over their total population, which
+# would put state-police crime in the cities they do not patrol.
+t = mk_table([
+    ("rural", 2023, "10001", 1000,  0, None, {}),          # nobody covers it
+    ("city",  2023, "10002", 9000, 12, None, {"murder": 9}),
+    ("state", 2023, None,    5000, 12, None, {"murder": 6}),
+])
+acc, st = aggregate(t)
+rural = acc[(t.counties.get("10001"), 2023)]
+city = acc[(t.counties.get("10002"), 2023)]
+ok(st["spread"] == 1, "the county-less agency is placed, not discarded")
+ok(rural[POP] == 6000 and city[POP] == 9000,
+   "its population lands entirely on the unserved county")
+ok(totals_for(rural)["murder"] == 6, "and so do its offences")
+ok(rural[EST] == 6, "all of which are marked estimated - nobody filed them here")
+ok(city[REP] == 9000 and rural[REP] == 5000,
+   "the state force's own residents count as covered - it did file for them")
+ok(rural[REP] < rural[POP],
+   "but the county's unpoliced 1,000 still read as uncovered, not as 100%")
+
+section("imputation tiers")
+from impute import _collapsed, _series, impute  # noqa: E402
+
+# Tier 1 scales a part-year to twelve months and records how much of the
+# result was invented.
+t = mk_table([("a", 2023, "10001", 12000, 6, None, {"murder": 5})])
+est, st = impute(t, states_path=Path("/nonexistent"))
+ok(t.counts[BASE_CRIMES.index("murder")][0] == 10, "6 months of 5 scales to 12 months of 10")
+ok(abs(est[0] - 0.5) < 1e-9, "half of that figure is an estimate")
+ok(st["tiers"][1] == 1, "counted as tier 1")
+
+# Tier 2 uses the agency's own rate from adjacent years, never a peer's.
+t = mk_table([
+    ("a", 2021, "10001", 10000, 12, None, {"murder": 10}),
+    ("a", 2022, "10001", 10000,  0, None, {}),
+    ("a", 2023, "10001", 10000, 12, None, {"murder": 10}),
+])
+est, st = impute(t, states_path=Path("/nonexistent"))
+ok(t.counts[BASE_CRIMES.index("murder")][1] == 10,
+   "the gap year takes the agency's own rate")
+ok(st["tiers"][2] == 1 and st["tiers"][3] == 0, "counted as tier 2, not donor")
+ok(est[1] == 1.0, "and is wholly an estimate")
+
+# A twelve-month filing reporting almost nothing against its own history
+# is retracted - NYPD 2021 filed 636 offences for 8.5 million people.
+t = mk_table([
+    ("a", 2021, "10001", 500000, 12, None, {"murder": 400}),
+    ("a", 2022, "10001", 500000, 12, None, {"murder": 2}),
+    ("a", 2023, "10001", 500000, 12, None, {"murder": 400}),
+])
+ok(_collapsed(t, _series(t)) == [1], "an implausible full-year filing is spotted")
+
+# The opposite mistake deletes honest quiet years. Orange County Sheriff VT
+# filed twelve genuine zeros in 2023 and must survive.
+t = mk_table([
+    ("a", 2022, "10001", 9000, 12, None, {"murder": 1}),
+    ("a", 2023, "10001", 9000, 12, None, {}),
+    ("a", 2024, "10001", 9000, 12, None, {"murder": 1}),
+])
+ok(_collapsed(t, _series(t)) == [], "a small quiet county is left alone")
+
+section("calibration to state margins")
+import json as _json  # noqa: E402
+import tempfile  # noqa: E402
+
+# Published state total 100; agencies filed 60; the estimate is scaled so
+# the two meet, rather than being left wherever the donor cell put it.
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+    _json.dump({"states": {"Alabama": {
+        "2000": {"pop": 1000, "totals": {"murder": 100}},
+        "2021": {"pop": 1000, "totals": {"murder": 100}},
+    }}}, fh)
+    spath = Path(fh.name)
+
+
+def cal_table(year):
+    t = mk_table([
+        ("filed",   year, "01001", 10000, 12, None, {"murder": 60}),
+        ("missing", year, "01002", 10000,  0, None, {}),
+        ("donor",   year, "01003", 10000, 12, None, {"murder": 20}),
+    ])
+    t.states.values[t.state[0]] = "alabama"
+    return t
+
+
+t = cal_table(2000)
+est, st = impute(t, states_path=spath)
+m = BASE_CRIMES.index("murder")
+ok(t.counts[m][1] == 20,
+   "the estimated agency is scaled to close the state's residual (got %d)"
+   % t.counts[m][1])
+ok(t.counts[m][0] == 60, "filed figures are never rescaled")
+
+# 2020 onward the published total is a participation sum, not an estimate.
+# Calibrating to it would assert a known undercount as ground truth.
+t = cal_table(2021)
+est, st = impute(t, states_path=spath)
+# The donor cell's population-weighted rate is (60+20)/20000 = 0.004, so
+# the estimate is 40 - left exactly where the donor put it. Calibrating it
+# to the same published total would have pulled it to 20, asserting a
+# participation sum as if it were a complete count.
+ok(t.counts[m][1] == 40, "NIBRS-era estimates are left uncalibrated (k = 1)")
+ok(st["uncalibrated"] >= 1, "and are reported as uncalibrated")
+spath.unlink()
+
 section("API key redaction")
 # Every one of these is a URL that could reach a log, an exception message
 # or a cache filename. The assertion that matters is not "the output looks

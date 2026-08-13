@@ -68,6 +68,59 @@ describe('decodeCountyRec: compact-1', () => {
   });
 });
 
+/* ─────────────────────────────────────────────────────────────────
+   compact-2, and why offsets come from meta.record
+
+   compact-2 inserts `imp` between `cov` and the totals. The old decoder
+   hardcoded totals at index 2, so reading a compact-2 file with it would
+   have labelled `imp` as the first offence and shifted every other one —
+   silently, with no error and plausible-looking numbers.
+   ───────────────────────────────────────────────────────────────── */
+const REC2 = ['pop', 'cov', 'imp'].concat(ORDER);
+
+describe('decodeCountyRec: compact-2', () => {
+  it('reads imp and offsets the totals past it', () => {
+    const r = decodeCountyRec([50000, 91.5, 0.25, 100, 2, 400], 2023, true, ORDER, REC2);
+    expect(r.pop).toBe(50000);
+    expect(r.cov).toBe(91.5);
+    expect(r.imp).toBe(0.25);
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+  });
+
+  it('still decodes compact-1 when meta.record says so', () => {
+    const r = decodeCountyRec([50000, 91.5, 100, 2, 400], 2023, true, ORDER,
+      ['pop', 'cov'].concat(ORDER));
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+    expect(r.imp).toBeNull();
+  });
+
+  it('assumes compact-1 when meta.record is absent, as old files are', () => {
+    const r = decodeCountyRec([50000, 91.5, 100, 2, 400], 2023, true, ORDER);
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+    expect(r.imp).toBeNull();
+  });
+
+  it('follows meta.record even when the slots are reordered', () => {
+    // The point of reading offsets rather than assuming them: this layout
+    // is not one the builder emits, and it still decodes correctly.
+    const r = decodeCountyRec([0.5, 50000, 91.5, 100, 2, 400], 2023, true, ORDER,
+      ['imp', 'pop', 'cov'].concat(ORDER));
+    expect(r.imp).toBe(0.5);
+    expect(r.pop).toBe(50000);
+    expect(r.cov).toBe(91.5);
+    expect(r.totals.violent).toBe(100);
+  });
+
+  it('distinguishes a fully-estimated county-year from an absent one', () => {
+    // cov 0 with imp 1 is a real county nobody filed for. It must decode
+    // as a drawable figure, not as missing data.
+    const r = decodeCountyRec([50000, 0, 1, 100, 2, 400], 2023, true, ORDER, REC2);
+    expect(r.cov).toBe(0);
+    expect(r.imp).toBe(1);
+    expect(r.rates.violent).toBeCloseTo(200, 9);
+  });
+});
+
 describe('decodeCountyRec: verbose object form', () => {
   it('passes through the per-state API build unchanged', () => {
     const r = decodeCountyRec(
@@ -104,7 +157,7 @@ function feat(name: string, areaSqMi: number): Feat {
 }
 
 function rec(pop: number, rates: Record<string, number>): Rec {
-  return { pop, cov: null, src: 'SRS', rates, totals: {} };
+  return { pop, cov: null, imp: null, src: 'SRS', rates, totals: {} };
 }
 
 function years(entries: [number, Rec][]): YearMap {
