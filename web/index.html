@@ -201,15 +201,45 @@
      Surface colour = population density. FBI Uniform Crime Reports.</p>
 
   <div class="grp">
+    <h2>Averaging window</h2>
+    <div class="seg" id="winSeg">
+      <button data-window="1" class="on">1 year</button>
+      <button data-window="3">3 years</button>
+      <button data-window="5">5 years</button>
+    </div>
+    <div class="note">Sums offences and population across neighbouring years
+      before dividing, which is not the same as averaging the rates. Rare
+      crimes cannot be steadied by geography alone — a region of 100,000
+      people expects about 6.5 murders a year, so its murder rate carries
+      roughly 39% error however the boundary is drawn. Three years is three
+      times the events. The window narrows at each end of the series.</div>
+  </div>
+
+  <div class="grp">
     <h2>Geographic area</h2>
     <div class="seg" id="geoSeg">
       <button data-geo="state" class="on">State</button>
+      <button data-geo="region:floor" title="Contiguous groups of low-population counties, fetched on first use">Region</button>
       <button data-geo="county" title="Loads the county layer (4.3 MB) on first use">County</button>
       <button data-geo="zip" disabled title="ZIP-level crime data does not exist nationally — see Data notes">ZIP code</button>
       <button data-geo="tract" disabled title="Census-tract crime data does not exist nationally — see Data notes">Census tract</button>
     </div>
-    <div class="note">County data is fetched on first click — it is larger than
-      everything else combined. If it fails, <em>Status</em> below says so and
+    <!-- Temporary: three ways of drawing the region layer are built so they
+         can be compared on the map. Once one is chosen the others go, and
+         this selector goes with them. -->
+    <label class="row" id="variantRow" style="display:none">Region method
+      <select id="variantSel">
+        <option value="floor">floor — merge to 100k</option>
+        <option value="cz">commuting zones — as published</option>
+        <option value="cz-floor">commuting zones + floor</option>
+      </select>
+    </label>
+    <div class="note">A region is a group of neighbouring counties in one
+      state, merged until it holds about 100,000 people. Small counties swing
+      wildly year to year — under 10,000 residents the median violent rate
+      moves 45% a year and the murder rate 100% — and grouping them makes a
+      trend visible. Large counties are left alone. Region and county data are
+      fetched on first click; if a fetch fails, <em>Status</em> says so and
       clicking again retries. ZIP and census tract have no nationwide source at
       all; see <em>Data notes</em>.</div>
   </div>

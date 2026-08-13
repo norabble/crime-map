@@ -37,6 +37,7 @@ export function render(): void {
     r.f.props.dens = r.dens;
     r.f.props.cov = r.cov;
     r.f.props.imp = r.imp;
+    r.f.props.span = r.span;
     r.f.props.src = r.src;
     r.f.props.lowCov = r.lowCov;
     r.f.props.estimated = r.estimated;
@@ -111,9 +112,10 @@ export function render(): void {
     highlightColor: [246, 196, 83, 90],
     material: { ambient: .55, diffuse: .65, shininess: 24, specularColor: [50, 50, 55] },
     updateTriggers: {
-      getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap],
-      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap, S.fade],
-      getLineColor: [S.year, S.geo, S.crime, S.normalize, S.swap, S.fade],
+      getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap, S.window],
+      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap, S.fade,
+        S.window],
+      getLineColor: [S.year, S.geo, S.crime, S.normalize, S.swap, S.fade, S.window],
     },
     transitions: { getElevation: 260, getFillColor: 260 },
     onHover: (info: any) => showTip(info),

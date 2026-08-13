@@ -3,6 +3,7 @@ import { SRS_LAST } from './config';
 import {
   decodeCountyRec, invalidateScales, percentile, recomputeScales,
 } from './data';
+import { clearLayers, registerLayer } from './layers';
 import { S } from './state';
 import type { Feat, Rec, YearMap } from './types';
 
@@ -182,6 +183,15 @@ beforeEach(() => {
   ]);
   S.countyData = null;
   S.countyFeatures = [];
+  S.geo = 'state';
+  // The real app registers this in buildData(). Registering accessors
+  // rather than the arrays themselves is what lets the fixtures above
+  // reassign S.features and S.data and still be seen.
+  clearLayers();
+  registerLayer({
+    id: 'state', label: 'State', noun: 'state',
+    features: () => S.features, store: () => S.data, keyOf: (f) => f.props.name,
+  });
   // Scales are cached per layer, so every test must start from a cold
   // cache or it inherits the previous test's fixture.
   invalidateScales();

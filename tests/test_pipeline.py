@@ -386,6 +386,103 @@ ok(t.counts[m][1] == 40, "NIBRS-era estimates are left uncalibrated (k = 1)")
 ok(st["uncalibrated"] >= 1, "and are reported as uncalibrated")
 spath.unlink()
 
+section("county adjacency and dissolve")
+from adjacency import (  # noqa: E402
+    assemble, build_adjacency, connected, perimeter_mi, union,
+)
+
+
+def sq(x0, y0, x1, y1):
+    """A closed rectangular ring, wound clockwise like us-atlas does."""
+    return [[x0, y0], [x0, y1], [x1, y1], [x1, y0], [x0, y0]]
+
+
+# Two unit squares meeting along x=1. The shared edge must cancel.
+GEO = {
+    "A": {"name": "A", "area_sq_mi": 1.0,
+          "geometry": {"type": "Polygon", "coordinates": [sq(0, 0, 1, 1)]}},
+    "B": {"name": "B", "area_sq_mi": 1.0,
+          "geometry": {"type": "Polygon", "coordinates": [sq(1, 0, 2, 1)]}},
+    "C": {"name": "C", "area_sq_mi": 1.0,
+          "geometry": {"type": "Polygon", "coordinates": [sq(5, 5, 6, 6)]}},
+}
+adj = build_adjacency(GEO)
+ok(adj["A"] == {"B"} and adj["B"] == {"A"}, "counties sharing an edge are adjacent")
+ok(adj["C"] == set(), "a detached county has no neighbours")
+ok(connected(adj, ["A", "B"]), "A+B is one contiguous block")
+ok(not connected(adj, ["A", "C"]), "A+C is not")
+ok(connected(adj, ["A"]), "a single county is trivially contiguous")
+
+from adjacency import ring_signed_area  # noqa: E402
+
+g, exact = union(GEO, ["A", "B"])
+ok(exact, "two squares dissolve cleanly")
+ok(len(g["coordinates"]) == 1, "and produce ONE polygon, not two")
+ring = g["coordinates"][0][0]
+# The vertices at x=1 survive - they are corners of the combined outline.
+# What must not survive is the SEGMENT joining them, which was the border.
+seg = {(tuple(ring[i]), tuple(ring[i + 1])) for i in range(len(ring) - 1)}
+ok(((1, 0), (1, 1)) not in seg and ((1, 1), (1, 0)) not in seg,
+   "the shared border segment cancelled")
+ok(abs(abs(ring_signed_area(ring)) - 2.0) < 1e-9,
+   "and the outline encloses both squares: area %.3f" % abs(ring_signed_area(ring)))
+
+# Disjoint counties are not a stitching failure - a region genuinely made
+# of two separate pieces is a MultiPolygon, and saying so is correct.
+g2, exact2 = union(GEO, ["A", "C"])
+ok(exact2, "counties that do not touch still stitch, as separate rings")
+ok(len(g2["coordinates"]) == 2, "producing two polygons, so nothing is lost")
+
+g3, _ = union(GEO, ["A"])
+ok(g3 is GEO["A"]["geometry"], "a lone county passes its geometry straight through")
+
+# Winding is NOT how a hole is identified: these rings are clockwise, and
+# testing the sign of the area reported zero outer rings and a perimeter
+# of 0 for the whole of Vermont.
+donut = [sq(0, 0, 10, 10), sq(4, 4, 6, 6)]
+polys = assemble(donut)
+ok(len(polys) == 1 and len(polys[0]) == 2,
+   "a ring inside another is a hole, whichever way it winds")
+ok(perimeter_mi({"type": "Polygon", "coordinates": donut}) > 0,
+   "and the perimeter counts the outer ring, not zero")
+
+section("region building")
+from build_regions import agglomerate, assign_keys, region_name  # noqa: E402
+
+# Keys must be real FIPS: agglomerate reads the state from the first two
+# characters, which is also what stops a region crossing a state line.
+D, E, F = "50001", "50003", "50005"
+RADJ = {D: {E, F}, E: {D, F}, F: {D, E}}
+RPOP = {D: 40000, E: 70000, F: 900000}
+RCENT = {D: (0, 0), E: (1, 0), F: (2, 0)}
+grp = agglomerate(RPOP, RADJ, RCENT, 100000)
+ok(grp[D] == grp[E], "two under-floor neighbours merge with each other")
+ok(grp[F] != grp[D], "a county already over the floor is left alone")
+
+# Same graph, but every neighbour is large: D has to absorb upward.
+grp2 = agglomerate({D: 40000, E: 900000, F: 900000}, RADJ, RCENT, 100000)
+ok(grp2[D] in (grp2[E], grp2[F]), "with no small neighbour it joins a large one")
+
+# State containment. G and H are adjacent across a state line.
+grp3 = agglomerate({"01001": 10000, "02001": 10000},
+                   {"01001": {"02001"}, "02001": {"01001"}},
+                   {"01001": (0, 0), "02001": (1, 0)}, 100000)
+ok(grp3["01001"] != grp3["02001"],
+   "a region never crosses a state line, even to reach the floor")
+
+ok(agglomerate(RPOP, RADJ, RCENT, 100000) == grp,
+   "membership is deterministic across runs")
+
+keys = assign_keys({"50001": "g", "50003": "g", "50005": "h"})
+ok(keys["50001"] == keys["50003"] != keys["50005"], "keys follow membership")
+ok(keys["50001"].startswith("R50"), "and carry the state: %s" % keys["50001"])
+ok(region_name(["50001"], {"50001": {"name": "Addison"}}, {"50001": 5}) == "Addison",
+   "a single-county region keeps its name")
+ok(region_name(["50001", "50021"],
+               {"50001": {"name": "Addison"}, "50021": {"name": "Rutland"}},
+               {"50001": 5, "50021": 60}) == "Rutland +1",
+   "a merged region is named for its largest member")
+
 section("API key redaction")
 # Every one of these is a URL that could reach a log, an exception message
 # or a cache filename. The assertion that matters is not "the output looks

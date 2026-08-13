@@ -16,7 +16,12 @@ export interface AppState {
      true:  the two channels swap */
   swap: boolean;
   palette: string;
-  geo: 'state' | 'county';
+  /** Active layer id from the registry in layers.ts — 'state', 'county'
+      or 'region:<variant>'. Not a union type: variants are discovered at
+      runtime from what the build produced. */
+  geo: string;
+  /** Years summed into each displayed value. 1 is off. */
+  window: number;
   meta: Record<string, unknown>;
   hasCounties: boolean;
   countyData: Store | null;
@@ -60,6 +65,7 @@ export const S: AppState = {
   swap: false,
   palette: 'greenred',
   geo: 'state',
+  window: 1,
   meta: {},
   hasCounties: false,
   countyData: null,

@@ -9,7 +9,7 @@
    The model and its labels are pure so they can be tested; only render()
    touches the DOM. */
 
-export type LayerKey = 'states' | 'counties' | 'basemap';
+export type LayerKey = 'states' | 'regions' | 'counties' | 'basemap';
 
 export type LayerState =
   | { kind: 'pending'; detail?: string }
@@ -28,6 +28,7 @@ export type StatusModel = Record<LayerKey, LayerState>;
 
 export const LAYER_LABELS: Record<LayerKey, string> = {
   states: 'States',
+  regions: 'Regions',
   counties: 'Counties',
   basemap: 'Basemap',
 };
@@ -35,6 +36,7 @@ export const LAYER_LABELS: Record<LayerKey, string> = {
 export function initialStatus(): StatusModel {
   return {
     states: { kind: 'pending' },
+    regions: { kind: 'pending' },
     counties: { kind: 'pending' },
     basemap: { kind: 'pending' },
   };

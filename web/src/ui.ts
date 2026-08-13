@@ -5,6 +5,8 @@ import {
 } from './data';
 import { $ } from './dom';
 import { fitActiveLayer } from './geo';
+import { hasLayer } from './layers';
+import { ensureRegions } from './regions';
 import { render } from './render';
 import { S } from './state';
 
@@ -140,6 +142,19 @@ export function initUI(): void {
     render();
   };
 
+  // averaging window
+  $('winSeg').querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+    b.onclick = () => {
+      $('winSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+      S.window = +(b.dataset.window || 1);
+      // A different window is a different distribution, so the fixed
+      // height domain has to be rebuilt against it.
+      recomputeScales();
+      render();
+    };
+  });
+
   // geography segment
   $('geoSeg').querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
     b.onclick = () => {
@@ -147,21 +162,41 @@ export function initUI(): void {
       void selectGeo(b);
     };
   });
+
+  // Region-method selector. Temporary, for choosing between the variants;
+  // it retargets the Region button and re-selects it if it is already on.
+  const variantSel = document.getElementById('variantSel') as HTMLSelectElement | null;
+  if (variantSel) {
+    variantSel.onchange = () => {
+      const btn = $('geoSeg')
+        .querySelector<HTMLButtonElement>('button[data-geo^="region:"]');
+      if (!btn) return;
+      btn.dataset.geo = 'region:' + variantSel.value;
+      if (btn.classList.contains('on')) void selectGeo(btn);
+    };
+  }
 }
 
 /* Switching to counties may need a 4.3 MB fetch first. If it fails we stay
    on the current layer rather than switching to an empty one - the status
    panel says why, and clicking County again retries. */
 async function selectGeo(b: HTMLButtonElement): Promise<void> {
-  const target = b.dataset.geo as 'state' | 'county';
+  const target = b.dataset.geo as string;
 
-  if (target === 'county' && !S.hasCounties) {
+  // Every layer but states is fetched on demand, so a click may need a
+  // several-megabyte request first. Failing keeps the current layer:
+  // switching to an empty one loses what the user was looking at, and the
+  // status panel already says what went wrong.
+  const needsLoad = target !== 'state' && !hasLayer(target);
+  if (needsLoad) {
     b.disabled = true;
     const label = b.textContent;
     b.textContent = 'Loading…';
     let loaded = false;
     try {
-      loaded = await ensureCounties();
+      loaded = target.startsWith('region:')
+        ? await ensureRegions(target.slice('region:'.length))
+        : await ensureCounties();
     } finally {
       b.textContent = label;
       b.disabled = false;
@@ -172,6 +207,9 @@ async function selectGeo(b: HTMLButtonElement): Promise<void> {
   $('geoSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
   b.classList.add('on');
   S.geo = target;
+
+  const row = document.getElementById('variantRow');
+  if (row) row.style.display = target.startsWith('region:') ? '' : 'none';
 
   // Each layer has its own year coverage; clamp into range.
   const yrs = new Set<number>();

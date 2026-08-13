@@ -1,21 +1,28 @@
 import {
   COVERAGE_MIN, CRIMES, ESTIMATED_MIN, PILLAR_PERCENTILE, SRS_LAST,
 } from './config';
+import { active, registerLayer } from './layers';
+import { smoothRec } from './smooth';
 import { S } from './state';
 import type {
-  CountiesDoc, CountyRec, Feat, GeoDoc, RawRec, Rec, Row, StatesDoc, Store, YearMap,
+  CountiesDoc, CountyRec, Feat, GeoDoc, RawRec, Rec, RegionsDoc, Row, StatesDoc,
+  Store, YearMap,
 } from './types';
 
 /* Active layer helpers — everything downstream reads through these so
    the state and county layers share one render path. */
 export function activeFeatures(): Feat[] {
-  return S.geo === 'county' && S.hasCounties ? S.countyFeatures : S.features;
+  return active(S.geo).features();
 }
 export function activeStore(): Store {
-  return S.geo === 'county' && S.hasCounties ? S.countyData! : S.data;
+  return active(S.geo).store();
 }
 export function featureKey(f: Feat): string {
-  return S.geo === 'county' && S.hasCounties ? f.props.fips! : f.props.name;
+  return active(S.geo).keyOf(f);
+}
+/** Singular noun for the active layer, for prose in the tooltip. */
+export function activeNoun(): string {
+  return active(S.geo).noun;
 }
 
 /* Consume data/states.json + data/geo-states.json, both produced by the
@@ -77,6 +84,11 @@ export function buildData(statesDoc: StatesDoc | null, geoDoc: GeoDoc | null): v
     throw new Error('Only ' + matched +
       ' states joined between geometry and crime data — expected ~51.');
   }
+
+  registerLayer({
+    id: 'state', label: 'State', noun: 'state',
+    features: () => S.features, store: () => S.data, keyOf: (f) => f.props.name,
+  });
 
   recomputeScales();
   console.log('Joined ' + matched + ' states; years ' +
@@ -151,6 +163,51 @@ export function decodeCountyRec(
   };
 }
 
+/* Optional region layer: contiguous groups of low-population counties.
+
+   Same artifact shape as the county layer, so it goes through the same
+   decoder. Its geometry file carries a `members` list and an already-
+   composed name ("Rutland +2"), so nothing is appended to it the way
+   " County" is below. */
+export function buildRegions(
+  variant: string, geoDoc: GeoDoc, dataDoc: RegionsDoc,
+): number {
+  const regions = (dataDoc && dataDoc.regions) || {};
+  if (!Object.keys(regions).length) return 0;
+
+  invalidateScales();
+  const meta = (dataDoc && dataDoc.meta) || {};
+  const compact = !!meta.format && meta.format.indexOf('compact-') === 0;
+  const order = meta.crimeOrder || [];
+  const record = meta.record;
+
+  const store: Store = new Map();
+  const features: Feat[] = [];
+  for (const key in regions) {
+    const g = geoDoc[key];
+    if (!g) continue;
+    const byYear: YearMap = new Map();
+    for (const ys in regions[key]) {
+      byYear.set(+ys, decodeCountyRec(regions[key][ys], +ys, compact, order, record));
+    }
+    store.set(key, byYear);
+    features.push({
+      type: 'Feature',
+      geometry: g.geometry,
+      props: { name: g.name || key, areaSqMi: g.area_sq_mi, fips: key },
+    });
+  }
+  if (!features.length) return 0;
+
+  const id = 'region:' + variant;
+  registerLayer({
+    id, label: 'Region', noun: 'region',
+    features: () => features, store: () => store, keyOf: (f) => f.props.fips!,
+  });
+  console.log('Region layer ' + variant + ': ' + features.length + ' regions');
+  return features.length;
+}
+
 /* Optional county layer. Stored parallel to the state layer so the
    geography selector can swap between them without a reload. */
 export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
@@ -198,6 +255,13 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
 
   S.countyUnmatched = unmatched.length;
   S.hasCounties = matched > 0;
+  if (S.hasCounties) {
+    registerLayer({
+      id: 'county', label: 'County', noun: 'county',
+      features: () => S.countyFeatures, store: () => S.countyData!,
+      keyOf: (f) => f.props.fips!,
+    });
+  }
   // A county key with no geometry is data that will never be drawn, and it
   // used to vanish here without a word: 17 years of Oglala Lakota and 64 of
   // Bedford City went missing behind a bare `continue`. fips.py should keep
@@ -237,7 +301,7 @@ export function invalidateScales(): void {
 }
 
 export function recomputeScales(): void {
-  const key = (S.geo === 'county' && S.hasCounties) ? 'county' : 'state';
+  const key = active(S.geo).id + '@' + S.window;
   const hit = scaleCache.get(key);
   if (hit) {
     for (const c of CRIMES) S.crimeMax[c.id] = hit.crimeMax[c.id];
@@ -264,7 +328,12 @@ export function recomputeScales(): void {
   for (const f of feats) {
     const byYear = store.get(featureKey(f));
     if (!byYear) continue;
-    for (const rec of byYear.values()) {
+    for (const year of byYear.keys()) {
+      // Sample the smoothed value, because that is what gets drawn. A
+      // scale built from single years would put the pillars against a
+      // domain computed for different numbers.
+      const rec = smoothRec(byYear, year, S.window);
+      if (!rec) continue;
       // Agencies carry a precomputed county density; areas belong to
       // polygons, and an agency is a point.
       const d = isFinite(rec.dens!) && rec.dens! > 0
@@ -327,7 +396,7 @@ export function currentValues() {
   const store = activeStore();
   for (const f of activeFeatures()) {
     const byYear = store.get(featureKey(f));
-    const rec = byYear && byYear.get(S.year);
+    const rec = byYear && smoothRec(byYear, S.year, S.window);
     const rate = rec ? rec.rates[def.id] : NaN;
     const total = rec ? rec.totals[def.id] : NaN;
     const pop = rec ? rec.pop : NaN;
@@ -341,7 +410,8 @@ export function currentValues() {
     const estimated = (imp != null && imp >= ESTIMATED_MIN);
 
     if (isFinite(rate) && rate > maxRate) maxRate = rate;
-    out.push({ f, rate, total, pop, dens, cov, imp, src, lowCov, estimated });
+    out.push({ f, rate, total, pop, dens, cov, imp, span: rec ? rec.span : undefined,
+      src, lowCov, estimated });
   }
   return { def, rows: out, maxRate };
 }

@@ -270,6 +270,62 @@ hierarchy rule (only the most serious offence per incident) while the CDE
 summarized figures do not. Compared directly on the same VT/NH/ME
 agencies, Return A ran 5.1% below the API for 2023.
 
+## Regions, and the averaging window
+
+A county of 8,000 people is not a measurement, it is a coin toss. Under
+10,000 residents the median county's violent rate moves 45% from one year
+to the next and its murder rate 100%, with 89% of years recording no
+murders at all. 41% of counties hold under 20,000 people but only 3.7% of
+the population, so most of the *map* is noise while most of the *people*
+are not.
+
+Two independent controls, and they compose. Median |year-on-year change|:
+
+| layer | window | violent | murder |
+|---|---|---|---|
+| counties | 1 year | 19% | 55% |
+| counties | 3 years | 9% | 21% |
+| counties | 5 years | 6% | 12% |
+| regions | 1 year | 9% | 37% |
+| regions | 3 years | 5% | 14% |
+| regions | 5 years | 3% | 9% |
+
+**A region** is a group of neighbouring counties within one state, merged
+until it holds about 100,000 people. Counties already above the floor are
+left alone — 402 of the 936 regions are a single county. Boundaries are
+fixed across all years and committed, so a rebuild cannot move one and
+break the trend you were reading.
+
+**The averaging window** sums offences and population across neighbouring
+years and then divides. That is not the same as averaging the yearly
+rates, which would weight a year of 40,000 people the same as one of
+60,000.
+
+**For rare crimes the window does more than the geography.** Counties at
+a three-year window are steadier than regions at one year, and keep every
+county on the map. This is not a tuning accident: rate noise is Poisson,
+so the error is `1/sqrt(expected events)`, and a 100,000-person region
+expects about 6.5 murders a year — roughly 39% error however the boundary
+is drawn. Getting murder to 10% by geography alone would take 1.5 million
+people per unit, which is a state. Widening the window is the only other
+lever, and three years is three times the events.
+
+```bash
+make regions          # build; membership is reused, never silently moved
+make compare-regions  # volatility and shape, one row per variant
+```
+
+Three ways of drawing the layer are built so they can be compared:
+`floor` (merge to 100,000), `cz` (USDA commuting zones as published) and
+`cz-floor` (zones, then merged up to the floor). Measured at matched
+granularity, `floor` wins — 511 units at 7% / 6% / 26% against
+`cz-floor`'s 444 at 8% / 6% / 29%, and rounder shapes (0.51 against 0.45
+on Polsby-Popper). Commuting zones as published leave 238 regions under
+the floor and 124 spanning two states, so they do not solve the problem
+they were considered for. NCHS Health Service Areas would have been the
+better comparison — they were designed for stable small-area rates — but
+they exist only in a 1991 report with no machine-readable crosswalk.
+
 ### Per-state county builds via the API
 
 Still supported, and useful for fresher NIBRS-era data than a yearly bulk

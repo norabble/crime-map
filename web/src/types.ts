@@ -39,6 +39,8 @@ export interface Rec {
   dens?: number;
   agencies?: number;
   reporting?: number;
+  /** [first, last] year summed into this record when a window is active. */
+  span?: [number, number];
 }
 
 export type YearMap = Map<number, Rec>;
@@ -62,6 +64,8 @@ export interface FeatureProps {
   dens?: number;
   cov?: number | null;
   imp?: number | null;
+  /** [first, last] year summed in, when an averaging window is open. */
+  span?: [number, number];
   src?: string | null;
   lowCov?: boolean;
   estimated?: boolean;
@@ -87,6 +91,7 @@ export interface Row {
   dens: number;
   cov: number | null;
   imp: number | null;
+  span?: [number, number];
   src: string | null;
   lowCov: boolean;
   estimated: boolean;
@@ -112,6 +117,8 @@ export interface GeoEntry {
   area_sq_mi: number;
   fips?: string;
   name?: string;
+  /** Region geometry only: the county FIPS dissolved into this unit. */
+  members?: string[];
 }
 
 export type GeoDoc = Record<string, GeoEntry>;
@@ -123,16 +130,24 @@ export type GeoDoc = Record<string, GeoEntry>;
 export type CompactRec = number[];
 export type CountyRec = CompactRec | RawRec;
 
+export interface UnitMeta {
+  format?: string;
+  /** Slot names of a compact record, in order. */
+  record?: string[];
+  crimeOrder?: string[];
+  /** Merged unit key -> display name, e.g. 36998 -> "New York City". */
+  merged?: Record<string, string>;
+}
+
 export interface CountiesDoc {
-  meta?: {
-    format?: string;
-    /** Slot names of a compact record, in order. */
-    record?: string[];
-    crimeOrder?: string[];
-    /** Merged unit key -> display name, e.g. 36998 -> "New York City". */
-    merged?: Record<string, string>;
-  };
+  meta?: UnitMeta;
   counties: Record<string, Record<string, CountyRec>>;
+}
+
+/** data/regions/<variant>/regions.json — the same encoding as counties. */
+export interface RegionsDoc {
+  meta?: UnitMeta & { variant?: string; floor?: number };
+  regions: Record<string, Record<string, CountyRec>>;
 }
 
 /** Bounding box as [minX, minY, maxX, maxY]. */

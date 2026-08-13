@@ -54,6 +54,8 @@ copy of the key in a second place.
     make import      national counties 1960-2024 from Return A
     make validate    check the built county layer for known defects
     make merge       re-apply fips.py merges to existing geometry
+    make regions     build the region layer (every variant)
+    make compare-regions   score the variants against each other
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
@@ -207,6 +209,68 @@ Useful for spotting regressions:
   = 1,398, exactly matching the violent-crime total
 - Colorado area: 103,859 sq mi computed vs 104,094 published (0.23% err)
 - Earth surface: 4πR² with R=3958.7613 mi ≈ 196.9M sq mi
+
+## Regions, and the averaging window
+
+Two independent noise controls. Small counties are unreadable: under
+10,000 people the median violent rate moves 45% year on year and the
+murder rate 100%, with 89% of years recording no murders at all.
+
+**Regions** (`scripts/build_regions.py`) group contiguous counties within
+one state up to a 100,000 population floor. `make regions` builds every
+variant; `make compare-regions` scores them.
+
+**The averaging window** (`web/src/smooth.ts`) sums offences and
+population over 1, 3 or 5 years and then divides. Measured, median
+|year-on-year change|:
+
+| layer | window | violent | murder |
+|---|---|---|---|
+| counties | 1 | 19% | 55% |
+| counties | 3 | 9% | 21% |
+| counties | 5 | 6% | 12% |
+| regions | 1 | 9% | 37% |
+| regions | 3 | 5% | 14% |
+| regions | 5 | 3% | 9% |
+
+**Time beats space for rare crimes.** Counties at a 3-year window (21%)
+are steadier than regions at one year (37%), and keep every county. Reach
+for the window first; regions are for reducing the number of things on
+screen as much as for noise.
+
+Things that will bite:
+
+- **Sum counts and population, then divide.** Averaging the yearly
+  *rates* weights a year of 40,000 people the same as one of 60,000, so a
+  growing unit reads as though its rate fell. The test fixture uses a
+  changing population precisely because an equal-population one cannot
+  tell the two apart.
+- **Murder has a floor no geography clears.** Rate error is
+  `1/sqrt(expected events)`; 100,000 people expect 6.5 murders, so ~39%.
+  Theory and measurement agree to two points. A variant that appears to
+  beat it has a bug.
+- **Membership is committed and frozen.** `build_regions.py` reuses
+  `data/regions/<variant>/members.json` unless `--redefine` is passed. A
+  boundary that moves between builds invalidates every trend the layer
+  exists to show.
+- **Regions never cross a state line** — reporting practice and the
+  calibration in `impute.py` are both per-state.
+- **Compactness is a tie-break, not a constraint.** Yukon-Koyukuk is
+  146,881 sq mi with 506 residents.
+- **The window changes the scale.** A different window is a different
+  distribution and therefore a different p99, so the scale cache is keyed
+  `(layer, window)`.
+- `scripts/adjacency.py` derives contiguity from shared vertices in
+  `geo-counties.json` — us-atlas descends from TopoJSON, so neighbours
+  carry identical coordinates. It also does the dissolve by cancelling
+  edges traversed from both sides. **Do not identify holes by winding
+  order**: us-atlas winds clockwise, and testing the sign of the area
+  gave zero outer rings and a perimeter of 0 for Vermont. `assemble()`
+  uses nesting depth instead.
+
+NCHS Health Service Areas were the intended third variant and are absent:
+they exist only in a 1991 PDF with no machine-readable crosswalk. USDA
+commuting zones stand in. See `scripts/fetch_sources.py`.
 
 ## Sub-state data
 
