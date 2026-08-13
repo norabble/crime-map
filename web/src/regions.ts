@@ -2,6 +2,8 @@ import { buildRegions } from './data';
 import { DATA } from './dom';
 import { hasLayer } from './layers';
 import { loadOptional } from './load';
+import { reverseMembers } from './search';
+import { S } from './state';
 import { setStatus } from './status';
 import type { GeoDoc, RegionsDoc } from './types';
 
@@ -52,6 +54,9 @@ export async function ensureRegions(variant: string): Promise<boolean> {
     }
 
     const n = buildRegions(variant, geo.data, data.data);
+    // The reverse of each region's `members` list, so a county FIPS from
+    // the search index can be turned into the region drawn over it.
+    S.regionMembers.set(id, reverseMembers(geo.data));
     if (!n) {
       setStatus('regions', { kind: 'absent', detail: 'no regions matched geometry' });
       return false;

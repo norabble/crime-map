@@ -152,3 +152,42 @@ export interface RegionsDoc {
 
 /** Bounding box as [minX, minY, maxX, maxY]. */
 export type BBox = [number, number, number, number];
+
+/* --- place search ------------------------------------------------- */
+
+export type SearchKind = 'state' | 'county' | 'city';
+
+/** data/search.json. Rows are arrays: at ~20,000 of them the field names
+    would outweigh the data. Order is declared in meta.fields. */
+export interface SearchDoc {
+  meta?: {
+    fields?: Record<string, string[]>;
+    /** Abbreviation -> state name, the only copy of that table. */
+    states_by_abbr?: Record<string, string>;
+    source?: string;
+  };
+  /** [name, abbr, fips] */
+  states?: [string, string, string][];
+  /** [name, abbr, fips, pop] */
+  counties?: [string, string, string, number][];
+  /** [name, abbr, fips, pop] */
+  cities?: [string, string, string, number][];
+}
+
+export interface SearchHit {
+  kind: SearchKind;
+  name: string;
+  abbr: string;
+  /** State name for a state hit, county FIPS otherwise. */
+  target: string;
+  stateName: string;
+  pop: number;
+}
+
+export interface SearchIndex {
+  entries: {
+    kind: SearchKind; name: string; abbr: string;
+    target: string; stateName: string; pop: number;
+  }[];
+  statesByAbbr: Record<string, string>;
+}

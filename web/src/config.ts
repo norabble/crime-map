@@ -66,6 +66,11 @@ export const PILLAR_PERCENTILE = 0.99;
 export const FADE_RGB: RGB = [46, 54, 72];
 export const FADE_ALPHA = 48;
 
+/* The search selection outline. `--accent2` from the stylesheet, which
+   already means "you chose this" on every segmented button, so the map and
+   the panels agree without a second convention to learn. */
+export const SELECTION_RGBA: [number, number, number, number] = [74, 168, 216, 235];
+
 /* ---------- density colour ramps ---------------------------------- */
 export const PALETTES: Record<string, Palette> = {
   greenred: {

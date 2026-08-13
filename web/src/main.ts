@@ -9,12 +9,13 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { buildData } from './data';
 import { $, DATA } from './dom';
 import { esc } from './format';
-import { loadLocal } from './load';
+import { loadLocal, loadOptional } from './load';
+import { buildIndex } from './search';
 import { initMap } from './map';
 import { S } from './state';
 import { renderStatus, setStatus } from './status';
 import { initUI } from './ui';
-import type { GeoDoc, StatesDoc } from './types';
+import type { GeoDoc, SearchDoc, StatesDoc } from './types';
 
 /* `bootStage` tracks how far boot got. Every step below runs inside one
    try, so without it a missing data file and a WebGL failure surface as
@@ -54,6 +55,17 @@ async function boot(): Promise<void> {
        failed silently. counties.ts fetches it when the County button is
        clicked, where a failure can be reported and retried. */
     setStatus('counties', { kind: 'pending', detail: 'click County to load' });
+
+    /* The gazetteer is ~200 KB gzipped and every layer needs it, so unlike
+       the county and region layers it loads here. loadOptional keeps a
+       missing file from being fatal: search disables itself and says why,
+       and the map is entirely usable without it. */
+    const searchDoc = await loadOptional<SearchDoc>(DATA('search.json'));
+    if (searchDoc.ok) {
+      S.searchIndex = buildIndex(searchDoc.data);
+    } else {
+      console.warn('place search unavailable:', searchDoc.message);
+    }
 
     bootStage = 'rendering';
     splashMsg.textContent = 'Rendering…';

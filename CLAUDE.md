@@ -56,6 +56,7 @@ copy of the key in a second place.
     make merge       re-apply fips.py merges to existing geometry
     make regions     build the region layer (every variant)
     make compare-regions   score the variants against each other
+    make search      place gazetteer for the viewer's search box
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
@@ -220,6 +221,25 @@ murder rate 100%, with 89% of years recording no murders at all.
 one state up to a 100,000 population floor. `make regions` builds every
 variant; `make compare-regions` scores them.
 
+**`floor` is the variant that works** — confirmed on the map, not just in
+the table. 936 units, best compactness (0.51 against 0.45), and at
+matched granularity it beats the commuting-zone seed on every measure.
+Commuting zones tend to merge areas that were *already* large, which is
+how `cz-floor` flattered itself in the raw comparison: it looked steadier
+because it was coarser. All three stay built while the choice is open;
+`floor` is the default in `index.html` and the recommendation.
+
+**The volatility metric does not measure what the eye calls steadiness.**
+Scrolling years on counties still reads as random at a 3- or 5-year
+window, against a measured median |year-on-year| of 9% and 6%. Both
+observations are real, so the metric is answering a different question
+than the one being asked. A median says nothing about the tail, and the
+eye tracks *any* motion across 3,000 pillars rather than the typical one
+— so the thing to measure is probably the share of units moving more than
+some visible threshold, not the middle of the distribution. Deliberately
+unresolved; do not "fix" the map until the metric is right, because a
+change that improves the median may not change the impression at all.
+
 **The averaging window** (`web/src/smooth.ts`) sums offences and
 population over 1, 3 or 5 years and then divides. Measured, median
 |year-on-year change|:
@@ -271,6 +291,43 @@ Things that will bite:
 NCHS Health Service Areas were the intended third variant and are absent:
 they exist only in a 1991 PDF with no machine-readable crosswalk. USDA
 commuting zones stand in. See `scripts/fetch_sources.py`.
+
+## Place search
+
+`scripts/build_search.py` -> `data/search.json` (~200 KB gz), loaded at
+boot in `main.ts` because every layer needs it. `web/src/search.ts` is
+pure matching; `web/src/searchui.ts` owns the DOM and the side effects.
+
+The city gazetteer is free: every `local police department` row in Return
+A carries `agency_name` *and* `fips_state_county_code`, so the file is
+already a city-to-county crosswalk. No download.
+
+- **Store canonical FIPS.** Every code goes through `fips.canonical()` at
+  build time. NYPD's agency sits in 36061 and the map draws 36998; the
+  raw code would send every New York search to a county that is no longer
+  on the map.
+- **Return A names the agency, not the place**, and truncates at ~24
+  characters: "Suffolk Police Departmen", "Las Vegas Metro Pd". 724
+  entries carried a role tail. `strip_role()` removes them, and
+  `bare_key()` then drops city rows that duplicate a county row (679 of
+  them — "Los Angeles" was in the index twice).
+- **Rank by population before kind.** Ranking kind first put three small
+  Miami counties above Miami, Florida. States still win their own name
+  because they carry an effectively infinite population, so "Vermont" is
+  the state without a rule that also breaks Miami.
+- **Strip the generic tail from BOTH sides.** The index holds "Cook" and
+  people type "Cook County". Comparing a stripped index name against an
+  unstripped query matched nothing at all.
+- **The gap is real and must be described precisely.** A place policed by
+  a county sheriff has no agency row. The empty state says "no police
+  agency by that name", never "no such place" — different claims.
+- Selection is a **separate deck layer**, not a branch in
+  `getFillColor`. Three treatments already compose there (low-coverage
+  grey, estimated violet, fade); a fourth would either break them or be
+  lost under them.
+- A selection **survives a layer switch** by re-resolving the original
+  hit (`reselectForLayer`), so following Chicago from state to region to
+  county keeps it framed rather than dropping it.
 
 ## Sub-state data
 

@@ -1,4 +1,4 @@
-.PHONY: help setup data states geo counties discover inspect import merge serve test validate regions compare-regions clean distclean
+.PHONY: help setup data states geo counties discover inspect import merge serve test validate regions compare-regions search clean distclean
 
 PY ?= python3
 PORT ?= 8000
@@ -24,6 +24,8 @@ help:
 	@echo "  Region layer (groups of low-population counties):"
 	@echo "  make regions          build every variant from the county layer"
 	@echo "  make compare-regions  volatility and shape, one row per variant"
+	@echo ""
+	@echo "  make search     place gazetteer for the viewer's search box"
 	@echo "  make discover   probe the CDE agency routes (for the API path)"
 	@echo "  make counties   per-state counties via the API (STATES=VT)"
 	@echo ""
@@ -87,6 +89,13 @@ regions:
 
 compare-regions:
 	$(PY) scripts/compare_regions.py
+
+# The viewer's search box. States and counties come from the geometry;
+# cities come from police agency names in Return A, which carry a county
+# FIPS and so are a gazetteer nobody had to download. Needs counties.json
+# and geo-*.json to exist first.
+search:
+	$(PY) scripts/build_search.py
 
 # Aggregates the SAME per-agency calls `make agencies` makes, so once a
 # state is built the county layer costs nothing but cache reads.

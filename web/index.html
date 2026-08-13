@@ -182,8 +182,52 @@
   #splashMsg{font-size:12px;color:var(--muted)}
   #splashErr{max-width:460px;text-align:center;font-size:12px;line-height:1.6;color:var(--warn);display:none}
 
+  /* ── place search ────────────────────────────────────────────────
+     Sits at the head of the rankings panel: the same list, reachable two
+     ways. Typing replaces the leaderboard with results and clearing puts
+     it back, so the panel never shows both and never goes empty. */
+  .srBox{display:flex;align-items:center;gap:7px;background:#161c2b;
+    border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:10px}
+  .srBox:focus-within{border-color:var(--accent2)}
+  .srIcon{width:13px;height:13px;color:var(--muted);flex:none}
+  .srBox:focus-within .srIcon{color:var(--accent2)}
+  #srInput{flex:1;min-width:0;background:none;border:none;color:var(--text);
+    font-family:inherit;font-size:11.5px;padding:1px 0}
+  #srInput:focus{outline:none}
+  #srInput::placeholder{color:var(--muted)}
+  /* The browser's own search affordances are the wrong size and colour here. */
+  #srInput::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+  #srClear{display:none;background:none;border:none;color:var(--muted);cursor:pointer;
+    font-size:15px;line-height:1;padding:0 1px;flex:none}
+  #srClear:hover{color:var(--text)}
+  #srClear.on{display:block}
+
+  .sr{padding:6px 0 7px;border-bottom:1px solid rgba(36,44,64,.7)}
+  .sr:last-child{border-bottom:none}
+  .srHead{display:flex;align-items:baseline;gap:6px;font-size:11.5px;margin-bottom:4px}
+  .srHead .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srHead .ab{color:var(--muted);font-size:9.5px;letter-spacing:.6px;flex:none}
+  .srHead .pop{color:var(--muted);font-size:9.5px;font-variant-numeric:tabular-nums;flex:none}
+  /* The chain IS the answer to "what will this do": it names the unit this
+     place becomes in each geography, with the active one lit. */
+  .srChain{display:flex;flex-wrap:wrap;gap:4px}
+  .srStep{background:#141a29;border:1px solid var(--border);color:var(--muted);
+    border-radius:5px;padding:2.5px 6px;font-family:inherit;font-size:10px;
+    cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srStep:hover:not(:disabled){border-color:#3d4a66;color:var(--text)}
+  .srStep.on{background:var(--accent2);border-color:var(--accent2);color:#04121c;font-weight:600}
+  .srStep:disabled{opacity:.4;cursor:default}
+  #srList{display:none}
+  #srNote{display:none;margin-bottom:2px}
+  .searching #srList{display:block}
+  .searching #srNote:not(:empty){display:block}
+  .searching #rkTitle,.searching #rkList{display:none}
+
   @media (max-width:900px){
-    #ranking{display:none}
+    /* Search stays; the leaderboard goes. Finding a place beats ranking
+       twelve when there is no room for both. */
+    #ranking{width:238px;max-height:none;padding:12px}
+    #rkTitle,#rkList{display:none}
     #controls{width:270px}
     #legend{width:270px}
   }
@@ -352,6 +396,17 @@
 
 <!-- ───────────── RANKING ───────────── -->
 <div class="panel" id="ranking">
+  <div class="srBox">
+    <svg class="srIcon" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M10.4 10.4 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <input id="srInput" type="search" placeholder="Find a place" autocomplete="off"
+           spellcheck="false" aria-label="Find a state, county or city">
+    <button id="srClear" type="button" title="Clear" aria-label="Clear search">×</button>
+  </div>
+  <div id="srList"></div>
+  <div id="srNote" class="note"></div>
   <h2 id="rkTitle">Highest rates</h2>
   <div id="rkList"></div>
 </div>

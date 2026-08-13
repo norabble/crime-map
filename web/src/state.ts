@@ -1,6 +1,6 @@
 import type { MapboxOverlay } from '@deck.gl/mapbox';
 import type { Map as MapLibreMap } from 'maplibre-gl';
-import type { Feat, Store } from './types';
+import type { Feat, SearchHit, SearchIndex, Store } from './types';
 
 export interface AppState {
   crime: string;
@@ -22,6 +22,16 @@ export interface AppState {
   geo: string;
   /** Years summed into each displayed value. 1 is off. */
   window: number;
+  /** Gazetteer for place search; null when search.json was not built. */
+  searchIndex: SearchIndex | null;
+  /** The unit the user picked, as (layer, key). Outlined on the map and
+      re-resolved rather than cleared when the layer changes. */
+  selected: { layer: string; key: string } | null;
+  /** The hit `selected` came from, kept so a layer switch can re-resolve
+      the original place rather than the key it happened to produce. */
+  selectedHit: SearchHit | null;
+  /** county FIPS -> region key, per region variant, built when it loads. */
+  regionMembers: Map<string, Map<string, string>>;
   meta: Record<string, unknown>;
   hasCounties: boolean;
   countyData: Store | null;
@@ -66,6 +76,10 @@ export const S: AppState = {
   palette: 'greenred',
   geo: 'state',
   window: 1,
+  searchIndex: null,
+  selected: null,
+  selectedHit: null,
+  regionMembers: new Map(),
   meta: {},
   hasCounties: false,
   countyData: null,

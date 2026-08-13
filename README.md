@@ -270,6 +270,31 @@ hierarchy rule (only the most serious offence per incident) while the CDE
 summarized figures do not. Compared directly on the same VT/NH/ME
 agencies, Return A ran 5.1% below the API for 2023.
 
+## Finding a place
+
+Type into the box at the head of the rankings panel. It accepts states,
+counties and cities, and it does not care which geography you are looking
+at: search "Chicago, IL" while the map is drawing states and it finds
+Illinois, then offers Cook County and the region containing it as one
+click each.
+
+Each result shows the same place named in all three geographies, with the
+one currently on screen lit. That chain is the answer to "what happens if
+I click this", and it is the only place in the interface that makes the
+relationship between the layers visible. Nothing switches layer without
+being asked, because a county or region jump can pull several megabytes.
+
+Cities come from police agency names in Return A, which carry a county
+FIPS — so the gazetteer costs no extra download. The limitation that
+follows: **a place with no police force of its own is not in the index.**
+A suburb policed by the county sheriff will not be found. The empty state
+says "no police agency by that name" rather than "no such place", because
+those are different claims and only the first one is true.
+
+```bash
+make search    # rebuild the gazetteer
+```
+
 ## Regions, and the averaging window
 
 A county of 8,000 people is not a measurement, it is a coin toss. Under
@@ -303,7 +328,12 @@ rates, which would weight a year of 40,000 people the same as one of
 
 **For rare crimes the window does more than the geography.** Counties at
 a three-year window are steadier than regions at one year, and keep every
-county on the map. This is not a tuning accident: rate noise is Poisson,
+county on the map. Note the honest caveat, though: scrolling through
+years on the county layer still *looks* random even at a five-year
+window, despite the measured figures above. A median says nothing about
+the tail, and the eye tracks any pillar that moves rather than the
+typical one — so these numbers are real but they are not measuring the
+impression. This is not a tuning accident: rate noise is Poisson,
 so the error is `1/sqrt(expected events)`, and a 100,000-person region
 expects about 6.5 murders a year — roughly 39% error however the boundary
 is drawn. Getting murder to 10% by geography alone would take 1.5 million
@@ -317,8 +347,10 @@ make compare-regions  # volatility and shape, one row per variant
 
 Three ways of drawing the layer are built so they can be compared:
 `floor` (merge to 100,000), `cz` (USDA commuting zones as published) and
-`cz-floor` (zones, then merged up to the floor). Measured at matched
-granularity, `floor` wins — 511 units at 7% / 6% / 26% against
+`cz-floor` (zones, then merged up to the floor). **`floor` is the default
+and the one that works.** Commuting zones tend to merge areas that were
+already large, so `cz-floor` looked steadier in the raw table only
+because it was coarser. Measured at matched granularity, `floor` wins — 511 units at 7% / 6% / 26% against
 `cz-floor`'s 444 at 8% / 6% / 29%, and rounder shapes (0.51 against 0.45
 on Polsby-Popper). Commuting zones as published leave 238 regions under
 the floor and 124 spanning two states, so they do not solve the problem

@@ -1,8 +1,9 @@
 import { GeoJsonLayer } from '@deck.gl/layers';
 import {
   ESTIMATED_MIX, ESTIMATED_RGB, FADE_ALPHA, FADE_RGB, MAX_HEIGHT_M, PALETTES,
+  SELECTION_RGBA,
 } from './config';
-import { activeFeatures, currentValues } from './data';
+import { activeFeatures, currentValues, featureKey } from './data';
 import { $ } from './dom';
 import { fmt } from './format';
 import { updateLegend, updateRanking } from './legend';
@@ -121,7 +122,32 @@ export function render(): void {
     onHover: (info: any) => showTip(info),
   });
 
-  S.deck.setProps({ layers: [layer] });
+  /* The selection is its OWN layer, drawn over the pillars, rather than a
+     branch inside getFillColor. Three treatments already compose in that
+     accessor — low-coverage grey, estimated violet, faded — and a fourth
+     that had to win would either break them or be lost under them. An
+     outline sits above all three and cannot be confused with any of them. */
+  const layers: unknown[] = [layer];
+  if (S.selected) {
+    const picked = activeFeatures().filter((f) => featureKey(f) === S.selected!.key);
+    if (picked.length) {
+      layers.push(new GeoJsonLayer({
+        id: 'selection-' + S.geo,
+        data: { type: 'FeatureCollection', features: picked } as any,
+        extruded: false,
+        filled: false,
+        stroked: true,
+        getLineColor: SELECTION_RGBA,
+        lineWidthMinPixels: 2.5,
+        // Above the extrusions, so the outline is not buried by a tall
+        // neighbour when the camera is pitched.
+        parameters: { depthTest: false },
+        pickable: false,
+      }));
+    }
+  }
+
+  S.deck.setProps({ layers: layers as never[] });
   updateLegend(def, rows, heightRef, maxRate, stops);
   updateRanking(def, rows);
   updateFadeReadout(heightRef, dom);

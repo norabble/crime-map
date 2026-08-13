@@ -7,6 +7,7 @@ import { $ } from './dom';
 import { fitActiveLayer } from './geo';
 import { hasLayer } from './layers';
 import { ensureRegions } from './regions';
+import { flyToSelected, initSearch, reselectForLayer } from './searchui';
 import { render } from './render';
 import { S } from './state';
 
@@ -163,6 +164,8 @@ export function initUI(): void {
     };
   });
 
+  initSearch();
+
   // Region-method selector. Temporary, for choosing between the variants;
   // it retargets the Region button and re-selects it if it is already on.
   const variantSel = document.getElementById('variantSel') as HTMLSelectElement | null;
@@ -211,6 +214,11 @@ async function selectGeo(b: HTMLButtonElement): Promise<void> {
   const row = document.getElementById('variantRow');
   if (row) row.style.display = target.startsWith('region:') ? '' : 'none';
 
+  // A selection follows the user across layers rather than being dropped:
+  // Chicago stays Chicago whether it is drawn as Illinois, a region or
+  // Cook County.
+  reselectForLayer();
+
   // Each layer has its own year coverage; clamp into range.
   const yrs = new Set<number>();
   const store = activeStore();
@@ -225,5 +233,8 @@ async function selectGeo(b: HTMLButtonElement): Promise<void> {
   syncCrimeOptions();
   recomputeScales();
   render();
-  fitActiveLayer();
+  // Following a search result into another layer should keep the place in
+  // frame. Only refit the whole layer when there is nothing selected.
+  if (S.selected) flyToSelected();
+  else fitActiveLayer();
 }
