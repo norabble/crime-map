@@ -39,6 +39,26 @@ export const ESTIMATED_MIX = 0.5;
 
 export const MAX_HEIGHT_M = 420000; // metres at exaggeration 1.0
 
+/* Pillar height is scaled to this percentile of the rate distribution,
+   not to the maximum.
+
+   Rates are heavy-tailed and the tail is mostly damage: a county of 38
+   people recording 34 offences is a real figure and a useless ceiling.
+   Against the true max, EVERY county-year of every crime type sat below
+   30% of full height — so the fade slider hid the entire map by its first
+   third, and the pillars carried almost no visible variation.
+
+   At p99 the median violent county-year rises from 1.1% of full height to
+   13.7%. The top 1% clamp at full height (normalizedRate already does
+   Math.min(1, …)), which is the intended trade: the very tallest pillars
+   stop being distinguishable from each other so that the other 99% become
+   distinguishable at all.
+
+   Height stays LINEAR in the rate below the cap, so a pillar twice as
+   tall still means twice the rate. Density keeps its log scale — it spans
+   four orders of magnitude and log10 already absorbs its tail. */
+export const PILLAR_PERCENTILE = 0.99;
+
 /* Faded pillars sink toward this dark blue-grey and drop to this alpha.
    Deliberately one notch fainter than the low-coverage treatment (which
    mixes toward mid grey at alpha 130), so the two readings stay distinct

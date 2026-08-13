@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SRS_LAST } from './config';
-import { decodeCountyRec, recomputeScales } from './data';
+import {
+  decodeCountyRec, invalidateScales, percentile, recomputeScales,
+} from './data';
 import { S } from './state';
 import type { Feat, Rec, YearMap } from './types';
 
@@ -180,25 +182,113 @@ beforeEach(() => {
   ]);
   S.countyData = null;
   S.countyFeatures = [];
+  // Scales are cached per layer, so every test must start from a cold
+  // cache or it inherits the previous test's fixture.
+  invalidateScales();
+});
+
+describe('percentile', () => {
+  const hundred = Array.from({ length: 100 }, (_, i) => i + 1); // 1..100
+
+  it('is insensitive to how extreme the extreme value is', () => {
+    // The whole point. A max-based scale moves with the worst datum; a
+    // p99 barely notices it.
+    const a = percentile(hundred.concat([1000]), 0.99);
+    const b = percentile(hundred.concat([1000000]), 0.99);
+    expect(a).toBeCloseTo(b, 6);
+  });
+
+  it('interpolates between neighbours rather than snapping to one', () => {
+    expect(percentile([0, 10], 0.5)).toBe(5);
+  });
+
+  it('returns the endpoints at 0 and 1', () => {
+    expect(percentile(hundred, 0)).toBe(1);
+    expect(percentile(hundred, 1)).toBe(100);
+  });
+
+  it('does not reorder the caller\'s array', () => {
+    // The samples array is reused across crime types; sorting in place
+    // would corrupt every subsequent read of it.
+    const v = [5, 1, 3];
+    percentile(v, 0.5);
+    expect(v).toEqual([5, 1, 3]);
+  });
+
+  it('survives empty and single-element input', () => {
+    expect(percentile([], 0.99)).toBe(0);
+    expect(percentile([42], 0.99)).toBe(42);
+  });
 });
 
 describe('recomputeScales', () => {
-  it('takes the crime maximum across every year, not the current one', () => {
+  it('takes the crime reference across every year, not the current one', () => {
     recomputeScales();
-    // 900 is Alpha in 1990. A per-year domain would give 300 for 2020.
-    expect(S.crimeMax.violent).toBe(900);
+    // Alpha 1990 is 900; 2020 alone would top out at 300. The reference is
+    // a percentile now rather than the maximum, so this pins the invariant
+    // that matters — all years, not this one — without pinning the
+    // interpolation arithmetic.
+    expect(S.crimeMax.violent).toBeGreaterThan(300);
+    expect(S.crimeMax.violent).toBeLessThanOrEqual(900);
   });
 
   it('takes the density range across every unit and every year', () => {
     recomputeScales();
     // Alpha 1990: 1000/100 = 10 (min). Beta 2020: 60000/1000 = 60 (max).
+    // Density keeps its true min/max — log10 already absorbs its tail.
     expect(S.densMin).toBe(10);
     expect(S.densMax).toBe(60);
   });
 
-  it('takes absMax across all crime types at once', () => {
+  it('takes absMax as the largest per-crime reference, not a pooled one', () => {
     recomputeScales();
-    expect(S.absMax).toBe(900);
+    // Pooling every crime's rates together would be dominated by whichever
+    // offence is most common and would drag the absolute scale below the
+    // violent reference, breaking cross-crime comparison.
+    expect(S.absMax).toBe(S.crimeMax.violent);
+    expect(S.absMax).toBeGreaterThan(S.crimeMax.murder);
+  });
+
+  it('lets one absurd outlier no longer set the whole scale', () => {
+    // The reason this changed. A single county-year of 500,000 per 100k
+    // used to be the ceiling, which put every real unit under 1% of full
+    // height and made the fade slider hide the entire map by its first
+    // third. Against p99 the outlier is clamped instead of governing.
+    //
+    // Needs a realistic number of units to demonstrate: with a handful of
+    // samples a 99th percentile interpolates to nearly the maximum, which
+    // is correct — a percentile only buys headroom when there is data to
+    // spare. The real layers have 3,380 state-years and 200,000
+    // county-years.
+    S.features = [];
+    S.data = new Map();
+    for (let i = 0; i < 200; i++) {
+      S.features.push(feat('U' + i, 100));
+      S.data.set('U' + i, years([[1990, rec(1000, { violent: 100 + i })]]));
+    }
+    S.features.push(feat('Freak', 100));
+    S.data.set('Freak', years([[1990, rec(1000, { violent: 500000 })]]));
+
+    recomputeScales();
+    expect(S.crimeMax.violent).toBeLessThan(1000);
+    // And the freak is still drawn — clamped to full height, not dropped.
+    expect(500000 / S.crimeMax.violent).toBeGreaterThan(1);
+  });
+
+  it('caches per layer, and invalidating recomputes', () => {
+    recomputeScales();
+    const first = S.crimeMax.violent;
+
+    // Same layer, changed data, no invalidation: the cache is meant to
+    // hold, because in the real app a layer's data cannot change without
+    // being rebuilt.
+    S.data.get('Alpha')!.set(1975, rec(1000, { violent: 900000 }));
+    recomputeScales();
+    expect(S.crimeMax.violent).toBe(first);
+
+    invalidateScales();
+    recomputeScales();
+    expect(S.crimeMax.violent).toBeGreaterThan(first);
   });
 
   it('gives an unseen crime type a domain of 1 rather than 0', () => {

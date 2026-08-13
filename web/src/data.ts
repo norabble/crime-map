@@ -1,4 +1,6 @@
-import { COVERAGE_MIN, CRIMES, ESTIMATED_MIN, SRS_LAST } from './config';
+import {
+  COVERAGE_MIN, CRIMES, ESTIMATED_MIN, PILLAR_PERCENTILE, SRS_LAST,
+} from './config';
 import { S } from './state';
 import type {
   CountiesDoc, CountyRec, Feat, GeoDoc, RawRec, Rec, Row, StatesDoc, Store, YearMap,
@@ -155,6 +157,10 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
   const counties = (dataDoc && dataDoc.counties) || {};
   if (!Object.keys(counties).length) return;
 
+  // This layer's contents are about to change, so anything cached about
+  // its scales is now a lie.
+  invalidateScales();
+
   S.countyData = new Map();
   S.countyFeatures = [];
   let matched = 0;
@@ -211,11 +217,48 @@ export function buildCounties(geoDoc: GeoDoc, dataDoc: CountiesDoc): void {
    Both channels are normalised across every unit AND every year, so
    moving the year slider shows genuine change rather than re-scaling
    underneath you. Re-run whenever the active layer changes.        */
+interface ScaleSet {
+  crimeMax: Record<string, number>;
+  densMin: number;
+  densMax: number;
+  absMax: number;
+}
+
+/* Scales are a pure function of a layer's contents, and a layer's contents
+   never change after it loads — so the answer is cached per layer rather
+   than recomputed on every geography toggle. A percentile has to sort, and
+   sorting nine arrays of 200,000 county-years on each switch is real work
+   for a result that cannot have changed. */
+const scaleCache = new Map<string, ScaleSet>();
+
+/** Drop cached scales. Call when a layer's data is replaced. */
+export function invalidateScales(): void {
+  scaleCache.clear();
+}
+
 export function recomputeScales(): void {
+  const key = (S.geo === 'county' && S.hasCounties) ? 'county' : 'state';
+  const hit = scaleCache.get(key);
+  if (hit) {
+    for (const c of CRIMES) S.crimeMax[c.id] = hit.crimeMax[c.id];
+    S.densMin = hit.densMin;
+    S.densMax = hit.densMax;
+    S.absMax = hit.absMax;
+    return;
+  }
+
   for (const c of CRIMES) S.crimeMax[c.id] = 0;
   S.densMin = Infinity;
   S.densMax = 0;
   S.absMax = 0;
+
+  // Collected rather than reduced, because a percentile needs the whole
+  // distribution. One array per crime across every unit and every year —
+  // the fixed-domain rule is what makes the year slider show change
+  // rather than re-scale underneath you, and it applies to the percentile
+  // exactly as it applied to the maximum.
+  const samples: Record<string, number[]> = {};
+  for (const c of CRIMES) samples[c.id] = [];
 
   const feats = activeFeatures(), store = activeStore();
   for (const f of feats) {
@@ -235,15 +278,42 @@ export function recomputeScales(): void {
       for (const c of CRIMES) {
         const v = rec.rates[c.id];
         if (!isFinite(v)) continue;
-        if (v > S.crimeMax[c.id]) S.crimeMax[c.id] = v;
-        if (v > S.absMax) S.absMax = v;
+        samples[c.id].push(v);
       }
     }
   }
+
+  for (const c of CRIMES) {
+    S.crimeMax[c.id] = percentile(samples[c.id], PILLAR_PERCENTILE) || 1;
+    // The absolute reference is the largest of the per-crime references,
+    // NOT the percentile of every crime pooled together. Pooling is
+    // dominated by whichever crime is most common — property — and would
+    // put a far larger share of property county-years at full height,
+    // destroying the cross-crime comparison absolute mode exists for.
+    if (S.crimeMax[c.id] > S.absMax) S.absMax = S.crimeMax[c.id];
+  }
   if (!isFinite(S.densMin)) S.densMin = 0;
   if (S.densMax <= 0) S.densMax = 1;
-  for (const c of CRIMES) if (!S.crimeMax[c.id]) S.crimeMax[c.id] = 1;
   if (S.absMax <= 0) S.absMax = 1;
+
+  scaleCache.set(key, {
+    crimeMax: { ...S.crimeMax },
+    densMin: S.densMin,
+    densMax: S.densMax,
+    absMax: S.absMax,
+  });
+}
+
+/* Linear-interpolated percentile. Sorts a copy: the caller's array is
+   reused across crime types and reordering it would be a silent bug. */
+export function percentile(values: number[], p: number): number {
+  if (!values.length) return 0;
+  const v = values.slice().sort((a, b) => a - b);
+  if (v.length === 1) return v[0];
+  const k = (v.length - 1) * Math.max(0, Math.min(1, p));
+  const lo = Math.floor(k);
+  if (lo >= v.length - 1) return v[v.length - 1];
+  return v[lo] + (v[lo + 1] - v[lo]) * (k - lo);
 }
 
 /* Values for the current crime type + year. Scaling maxima are NOT

@@ -91,6 +91,20 @@ geometry and fold logic there is what silently corrupts output if wrong.
   years, not per-year. Per-year normalisation makes the tallest unit
   full height in every year and hides all temporal change. This was a
   real bug once; don't reintroduce it.
+- **Height tops out at the 99th percentile, not the maximum**
+  (`PILLAR_PERCENTILE`). Rates are heavy-tailed and the tail is mostly
+  damage — a county of 38 people with 34 offences is a true figure and a
+  useless ceiling. Against the true max, *every* county-year of *every*
+  crime sat below 30% of full height, so the fade slider hid the whole
+  map by its first third. The top 1% clamp (`normalizedRate` already does
+  `Math.min(1, …)`), which is the deliberate trade. `absMax` is
+  `max(crimeP99)` — **not** the percentile of all crimes pooled, which is
+  dominated by property and would break the cross-crime comparison
+  absolute mode exists for. Density keeps its true min/max: log10 over
+  four orders of magnitude already absorbs its tail.
+- **Scales are cached per layer** and `invalidateScales()` is the only way
+  to clear them. A percentile has to sort, and `recomputeScales()` runs on
+  every geography toggle.
 - **Partial years are dropped.** `fold_monthly` requires 12 *reported*
   months. A part-year sum renders as a fake crash in the rate. The API
   does not omit unreported months — it returns all 12 keys with `null`
@@ -129,6 +143,21 @@ geometry and fold logic there is what silently corrupts output if wrong.
   a city's missing crime on a handful of small agencies. Cap it, leave
   the remainder unallocated, and report it — Illinois' burglary and
   Chicago's non-compliant filings are the standing example.
+- **A filing is retracted at both ends of implausibility.** Too low is
+  `COLLAPSE_*` (judged against the agency's own neighbouring years). Too
+  high is `IMPLAUSIBLE_RATE` — more than 1 offence per resident per year,
+  which needs no comparison because it is impossible at any size. `ga01003`,
+  a Georgia town of 1,089, filed three months of 2019 with 14,002
+  larcenies; tier 1 scaled it to 56,008, that became a "measured" year,
+  and tiers 2 and 3 handed its implied rate to 2020-2022. Coffee County
+  read 291,648 property offences per 100k.
+- **A per-capita rate needs a population worth dividing by.** UCR assigns
+  zero population to agencies policing where nobody lives — transit,
+  campus, mall, parks. Their offences are real and belong in the county
+  total; their *rates* are meaningless. `IMPLAUSIBLE_MIN_POP` guards the
+  ceiling above and `REFERENCE_MIN_POP` guards tier 2, because
+  `max(1, pop)` on a zero-population year yields offences-per-person —
+  and 85,936 agency-years report a full year with zero population.
 - **Geometry must be lon/lat.** us-atlas ships pre-projected "albers"
   builds too; `fetch_geometry.py` validates before accepting a source.
 - **Antimeridian.** Longitude deltas wrap to ±180 or Alaska's area is

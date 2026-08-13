@@ -67,6 +67,11 @@ PROPERTY_PARTS = ("burglary", "larceny", "motor")
 # number - the last increase was a real defect and the one before it was
 # not.
 MAX_POP_JUMPS = 80
+
+# A county recording more offences than it has residents is not a tail, it
+# is a defect. The 99.9th percentile of agency-years is 0.31 per resident,
+# so this sits well clear of anything real.
+MAX_PER_RESIDENT = 1.0
 MAX_RATE_SWINGS = 600
 POP_JUMP_MIN = 20000
 CALIBRATED_LAST = 2019
@@ -141,6 +146,27 @@ def main() -> None:
             if r[ix["cov"]] == 0 and r[ix.get("imp", 0)] == 0 \
                     and r[ix["violent"]] + r[ix["property"]] > 0:
                 zerocov_with_crime += 1
+    # No population floor, deliberately. The rate-swing check below has
+    # one, and that is exactly how Coffee County GA got through: it went
+    # 2,440 -> 162,988 per 100k at full coverage, and was skipped because
+    # its population of 19,302 missed the 20,000 floor by 698 people. More
+    # offences than residents is impossible at any size, so this needs no
+    # floor and catches the whole class.
+    impossible = []
+    for f, yy in c.items():
+        for y, r in yy.items():
+            pop = r[ix["pop"]]
+            if pop <= 0:
+                continue
+            per = (r[ix["violent"]] + r[ix["property"]]) / pop
+            if per > MAX_PER_RESIDENT:
+                impossible.append((round(per, 2), f, y))
+    check(not impossible,
+          "no county-year records more offences than residents (%d)"
+          % len(impossible))
+    for per, f, y in sorted(impossible, reverse=True)[:6]:
+        warn("  %s %s: %.2f offences per resident" % (f, y, per))
+
     check(neg == 0, "no negative counts (%d)" % neg)
     check(badv == 0, "violent equals its components everywhere (%d bad)" % badv)
     check(badp == 0, "property equals its components everywhere (%d bad)" % badp)

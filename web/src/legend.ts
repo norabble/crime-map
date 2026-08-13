@@ -1,3 +1,4 @@
+import { PILLAR_PERCENTILE } from './config';
 import { activeFeatures } from './data';
 import { $ } from './dom';
 import { esc, fmt } from './format';
@@ -11,8 +12,13 @@ export function updateLegend(
 ): void {
   const rateLbl = def.label.toLowerCase() + ' per 100k';
   const densLbl = 'population per sq mile';
+  // Not "peak" any more. The scale tops out at the 99th percentile across
+  // all years, so calling this a maximum would misdescribe every pillar
+  // above it — those are clamped, not tallest.
+  const pctLbl = Math.round(PILLAR_PERCENTILE * 100) + 'th pct';
   const rateEnds = ['0', fmt(heightRef, 0) +
-    (S.normalize ? '  (peak, all yrs)' : '  (absolute, all crimes)')];
+    (S.normalize ? '  (' + pctLbl + ', all yrs)'
+      : '  (' + pctLbl + ', all crimes)')];
   const densEnds = [fmt(S.densMin, 1), fmt(S.densMax, 0)];
 
   // The two channels are interchangeable, so the legend follows whichever
@@ -33,9 +39,15 @@ export function updateLegend(
 
   // Where this year's highest unit sits inside the fixed rate domain —
   // makes the year slider legible, since a low year reads as a low bar.
+  // This year's peak can now sit ABOVE the scale, because the scale stops
+  // at the 99th percentile. Saying "104% of rate scale" is accurate but
+  // reads as a bug, so the over-scale case is named instead.
+  const pctOfScale = maxRate / heightRef * 100;
   $('lgHnow').textContent = S.year + ' peak ' + def.label.toLowerCase() +
     ': ' + fmt(maxRate, 0) +
-    ' (' + Math.round(maxRate / heightRef * 100) + '% of rate scale)';
+    (pctOfScale > 100
+      ? ' (above the scale cap — drawn at full height)'
+      : ' (' + Math.round(pctOfScale) + '% of rate scale)');
 
   // Distribution of this year's rates, binned against the FIXED domain.
   // Always the rate, whichever channel is carrying it.

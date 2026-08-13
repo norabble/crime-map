@@ -81,6 +81,35 @@ COLLAPSE_MIN_NEIGHBOUR = 50
 COLLAPSE_RATIO = 0.1
 COLLAPSE_WINDOW = 2
 
+# The same argument in the other direction, and it needs no comparison
+# against neighbouring years because it is impossible at any size: a town
+# cannot record more offences than it has residents, year after year.
+#
+# ga01003 - a Georgia town of 1,089 - filed three months of 2019 with
+# 14,002 larcenies. Tier 1 scaled that to 56,008, which made it a
+# "measured" year, and tiers 2 and 3 then handed its implied rate of
+# 5,143,617 per 100k to 2020, 2021 and 2022. Coffee County read 291,648
+# property offences per 100k for a population of 19,469.
+#
+# 1.0 per resident sits above the 99.99th percentile of agency-years and
+# 3x above the 99.9th (0.306), so it cannot reach the genuine tail: 78
+# agency-years of 659,385 exceed it.
+#
+# The population floor matters as much as the ceiling. UCR assigns zero
+# or token population to agencies policing somewhere nobody lives -
+# transit systems, campuses, malls, park services - and their offences
+# are real and belong in the county total. They simply cannot be turned
+# into a per-capita rate, so they are never judged by this and never used
+# as one.
+IMPLAUSIBLE_MIN_POP = 250
+IMPLAUSIBLE_RATE = 1.0
+
+# A year used as an agency's own rate reference needs a population worth
+# dividing by. `max(1, pop)` on a zero-population row yields a rate of
+# offences-per-person, and 85,936 agency-years report a full year with
+# zero population.
+REFERENCE_MIN_POP = 100
+
 # Past this the anchor is not correcting an estimate, it is inventing one:
 # a huge residual divided by a tiny imputed base lands a whole city's
 # missing crime on a handful of small agencies. Capped and reported, with
@@ -151,6 +180,23 @@ def _collapsed(t: AgencyTable, series: dict) -> list[int]:
     return out
 
 
+def _overreported(t: AgencyTable, min_months: int) -> list[int]:
+    """Filings recording more crime than is possible for their population.
+
+    Judged on the annualised rate, so a part-year filing is caught before
+    tier 1 multiplies it up rather than after.
+    """
+    out = []
+    for i in range(len(t)):
+        m = t.months[i]
+        if m < 1 or t.pop[i] < IMPLAUSIBLE_MIN_POP:
+            continue
+        total = sum(t.counts[k][i] for k in range(NC))
+        if total / t.pop[i] * (FULL_YEAR / m) > IMPLAUSIBLE_RATE:
+            out.append(i)
+    return out
+
+
 def _donor_cells(t: AgencyTable, measured: list[bool]) -> tuple[dict, dict, dict]:
     """Population-weighted mean rates over rows that actually reported.
 
@@ -191,18 +237,22 @@ def impute(t: AgencyTable, min_months: int = DEFAULT_MIN_MONTHS,
     """
     est: dict[int, float] = {}
     stats = {"tiers": {}, "calibrated": 0, "uncalibrated": 0, "collapsed": 0,
-             "overcount": [], "k_extreme": [], "k_capped": 0,
+             "unestimated": 0, "overcount": [], "k_extreme": [], "k_capped": 0,
              "unallocated": []}
     tiers = {1: 0, 2: 0, 3: 0}
 
     series = _series(t)
     # Zeroing the month count is how an unusable filing is retracted: it
     # then fails `reported()` everywhere, so it neither counts toward
-    # coverage nor blocks the tiers below from replacing it.
-    collapsed = _collapsed(t, series)
-    for i in collapsed:
+    # coverage nor blocks the tiers below from replacing it. The counts go
+    # too, so that a row no tier manages to refill contributes nothing
+    # rather than leaving the bad figure in place.
+    retracted = set(_collapsed(t, series)) | set(_overreported(t, min_months))
+    stats["collapsed"] = len(retracted)
+    for i in retracted:
         t.months[i] = 0
-    stats["collapsed"] = len(collapsed)
+        for k in range(NC):
+            t.counts[k][i] = 0
 
     covered = _covered_rows(t)
     measured = [t.months[i] >= min_months for i in range(len(t))]
@@ -226,14 +276,15 @@ def impute(t: AgencyTable, min_months: int = DEFAULT_MIN_MONTHS,
         if measured[i] or i in covered or t.pop[i] <= 0:
             continue
 
-        rates = None
         # Tier 2: this agency's own rate, from the nearest years it did
         # report, on either side and within the bound.
         hist = series.get(t.ori[i], ())
         year = t.year[i]
         before = after = None
         for y, r in hist:
-            if not measured[r]:
+            # A reference needs a population worth dividing by, or the
+            # "rate" it yields is offences per person.
+            if not measured[r] or t.pop[r] < REFERENCE_MIN_POP:
                 continue
             if y < year and year - y <= max_gap:
                 before = (y, r)
@@ -241,21 +292,26 @@ def impute(t: AgencyTable, min_months: int = DEFAULT_MIN_MONTHS,
                 after = (y, r)
                 break
         picks = [p for p in (before, after) if p]
+        rates = None
+        tier = 2
         if picks:
             rates = [0.0] * NC
             for _, r in picks:
-                p = max(1, t.pop[r])
+                p = t.pop[r]
                 for k in range(NC):
                     rates[k] += t.counts[k][r] / p
             rates = [v / len(picks) for v in rates]
-            tier = 2
-        else:
-            # Tier 3: peers, from the finest cell that has anyone in it.
+
+        # An estimate that is itself impossible is worse than no estimate.
+        # Falling through to peers is the right recovery: the agency's own
+        # history is what is suspect, not the whole cell.
+        if rates is None or sum(rates) > IMPLAUSIBLE_RATE:
             y, s, a, g = year, t.state[i], t.atype[i], t.group[i]
             rates = _rate_from(cells, [(y, s, a, g), (y, s, a), (y, s)])
             tier = 3
 
-        if rates is None:
+        if rates is None or sum(rates) > IMPLAUSIBLE_RATE:
+            stats["unestimated"] += 1
             continue
         pop = t.pop[i]
         for k in range(NC):
