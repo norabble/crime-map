@@ -1,8 +1,9 @@
 import { GeoJsonLayer } from '@deck.gl/layers';
 import {
-  FADE_ALPHA, FADE_RGB, MAX_HEIGHT_M, PALETTES,
+  ESTIMATED_MIX, ESTIMATED_RGB, FADE_ALPHA, FADE_RGB, MAX_HEIGHT_M, PALETTES,
+  SELECTION_RGBA,
 } from './config';
-import { activeFeatures, currentValues } from './data';
+import { activeFeatures, currentValues, featureKey } from './data';
 import { $ } from './dom';
 import { fmt } from './format';
 import { updateLegend, updateRanking } from './legend';
@@ -36,8 +37,11 @@ export function render(): void {
     r.f.props.pop = r.pop;
     r.f.props.dens = r.dens;
     r.f.props.cov = r.cov;
+    r.f.props.imp = r.imp;
+    r.f.props.span = r.span;
     r.f.props.src = r.src;
     r.f.props.lowCov = r.lowCov;
+    r.f.props.estimated = r.estimated;
     // Each measure is reduced to a 0..1 position inside its own fixed
     // domain, so either can drive either channel.
     const tRate = normalizedRate(r.rate, heightRef);
@@ -55,6 +59,13 @@ export function render(): void {
     // Under-reported unit-years are pulled toward grey so an artificially
     // low pillar is visibly untrustworthy rather than reading as real.
     if (r.lowCov) col = mixToward(col, [96, 96, 96], 0.66);
+
+    // Mostly-estimated unit-years get a distinct hue on top. Applied after
+    // the grey so a pillar that is both under-reported and estimated still
+    // reads as estimated - which is the more important of the two, because
+    // grey says "this number is too low" and violet says "nobody filed this
+    // number at all".
+    if (r.estimated) col = mixToward(col, ESTIMATED_RGB, ESTIMATED_MIX);
 
     let alpha = isFinite(tHeight) ? (r.lowCov ? 130 : 255) : 70;
 
@@ -102,15 +113,41 @@ export function render(): void {
     highlightColor: [246, 196, 83, 90],
     material: { ambient: .55, diffuse: .65, shininess: 24, specularColor: [50, 50, 55] },
     updateTriggers: {
-      getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap],
-      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap, S.fade],
-      getLineColor: [S.year, S.geo, S.crime, S.normalize, S.swap, S.fade],
+      getElevation: [S.crime, S.year, S.exag, S.normalize, S.geo, S.swap, S.window],
+      getFillColor: [S.year, S.palette, S.geo, S.crime, S.normalize, S.swap, S.fade,
+        S.window],
+      getLineColor: [S.year, S.geo, S.crime, S.normalize, S.swap, S.fade, S.window],
     },
     transitions: { getElevation: 260, getFillColor: 260 },
     onHover: (info: any) => showTip(info),
   });
 
-  S.deck.setProps({ layers: [layer] });
+  /* The selection is its OWN layer, drawn over the pillars, rather than a
+     branch inside getFillColor. Three treatments already compose in that
+     accessor — low-coverage grey, estimated violet, faded — and a fourth
+     that had to win would either break them or be lost under them. An
+     outline sits above all three and cannot be confused with any of them. */
+  const layers: unknown[] = [layer];
+  if (S.selected) {
+    const picked = activeFeatures().filter((f) => featureKey(f) === S.selected!.key);
+    if (picked.length) {
+      layers.push(new GeoJsonLayer({
+        id: 'selection-' + S.geo,
+        data: { type: 'FeatureCollection', features: picked } as any,
+        extruded: false,
+        filled: false,
+        stroked: true,
+        getLineColor: SELECTION_RGBA,
+        lineWidthMinPixels: 2.5,
+        // Above the extrusions, so the outline is not buried by a tall
+        // neighbour when the camera is pitched.
+        parameters: { depthTest: false },
+        pickable: false,
+      }));
+    }
+  }
+
+  S.deck.setProps({ layers: layers as never[] });
   updateLegend(def, rows, heightRef, maxRate, stops);
   updateRanking(def, rows);
   updateFadeReadout(heightRef, dom);

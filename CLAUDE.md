@@ -52,6 +52,11 @@ copy of the key in a second place.
     make data        full build (geometry + states)
     make inspect     schema report for a bulk file in .cache/bulk/
     make import      national counties 1960-2024 from Return A
+    make validate    check the built county layer for known defects
+    make merge       re-apply fips.py merges to existing geometry
+    make regions     build the region layer (every variant)
+    make compare-regions   score the variants against each other
+    make search      place gazetteer for the viewer's search box
     make discover    probe CDE agency routes (for the API path)
     make counties    STATES=VT -> per-state counties via the API
 
@@ -89,6 +94,20 @@ geometry and fold logic there is what silently corrupts output if wrong.
   years, not per-year. Per-year normalisation makes the tallest unit
   full height in every year and hides all temporal change. This was a
   real bug once; don't reintroduce it.
+- **Height tops out at the 99th percentile, not the maximum**
+  (`PILLAR_PERCENTILE`). Rates are heavy-tailed and the tail is mostly
+  damage — a county of 38 people with 34 offences is a true figure and a
+  useless ceiling. Against the true max, *every* county-year of *every*
+  crime sat below 30% of full height, so the fade slider hid the whole
+  map by its first third. The top 1% clamp (`normalizedRate` already does
+  `Math.min(1, …)`), which is the deliberate trade. `absMax` is
+  `max(crimeP99)` — **not** the percentile of all crimes pooled, which is
+  dominated by property and would break the cross-crime comparison
+  absolute mode exists for. Density keeps its true min/max: log10 over
+  four orders of magnitude already absorbs its tail.
+- **Scales are cached per layer** and `invalidateScales()` is the only way
+  to clear them. A percentile has to sort, and `recomputeScales()` runs on
+  every geography toggle.
 - **Partial years are dropped.** `fold_monthly` requires 12 *reported*
   months. A part-year sum renders as a fake crash in the rate. The API
   does not omit unreported months — it returns all 12 keys with `null`
@@ -100,8 +119,48 @@ geometry and fold logic there is what silently corrupts output if wrong.
   fixture faked short years by omitting months instead of nulling them.
 - **Rates use total population,** matching FBI method. Do NOT rescale by
   participating population — surface `cov` instead and let the viewer
-  de-saturate. Rescaling fabricates figures the FBI never published.
+  de-saturate.
 - **Coverage below 80% is de-saturated,** not hidden and not corrected.
+- **Nothing is fabricated invisibly.** This *replaces* the older rule
+  that nothing may be fabricated at all. The county layer now estimates
+  agency-years nobody filed (`scripts/impute.py`, three tiers, calibrated
+  to published state totals for 1960–2019). What makes that legitimate is
+  the labelling, so the labelling is the invariant:
+  - `cov` is measured reporting only. It must never move because an
+    estimate was added. Crediting imputed rows to the reporting share
+    once made `cov` read ~100% everywhere the moment imputation was
+    switched on — the field became meaningless and nothing failed.
+  - `imp` is the share of offences nobody filed for that county. It is a
+    *separate channel* from `cov`, not a refinement of it: a county
+    nobody reported for is `cov` 0 **and** `imp` 1, and both readings
+    have to survive to the pixel.
+  - `--no-impute` must reproduce the measured build. It is the only
+    cheap proof that estimation is a layer rather than a rewrite.
+- **Calibration stops at 2019.** Before that, `states.json` totals are
+  FBI *estimates* — complete by construction, and the right anchor. From
+  2020 the same field is a participation sum (California 2021 covers
+  26%), so calibrating to it would assert a known undercount as truth.
+  `k` is recorded as 1 for those years so the two regimes are
+  distinguishable in the data, not just in prose.
+- **`k` is capped at 5.** A huge residual over a tiny imputed base lands
+  a city's missing crime on a handful of small agencies. Cap it, leave
+  the remainder unallocated, and report it — Illinois' burglary and
+  Chicago's non-compliant filings are the standing example.
+- **A filing is retracted at both ends of implausibility.** Too low is
+  `COLLAPSE_*` (judged against the agency's own neighbouring years). Too
+  high is `IMPLAUSIBLE_RATE` — more than 1 offence per resident per year,
+  which needs no comparison because it is impossible at any size. `ga01003`,
+  a Georgia town of 1,089, filed three months of 2019 with 14,002
+  larcenies; tier 1 scaled it to 56,008, that became a "measured" year,
+  and tiers 2 and 3 handed its implied rate to 2020-2022. Coffee County
+  read 291,648 property offences per 100k.
+- **A per-capita rate needs a population worth dividing by.** UCR assigns
+  zero population to agencies policing where nobody lives — transit,
+  campus, mall, parks. Their offences are real and belong in the county
+  total; their *rates* are meaningless. `IMPLAUSIBLE_MIN_POP` guards the
+  ceiling above and `REFERENCE_MIN_POP` guards tier 2, because
+  `max(1, pop)` on a zero-population year yields offences-per-person —
+  and 85,936 agency-years report a full year with zero population.
 - **Geometry must be lon/lat.** us-atlas ships pre-projected "albers"
   builds too; `fetch_geometry.py` validates before accepting a source.
 - **Antimeridian.** Longitude deltas wrap to ±180 or Alaska's area is
@@ -133,6 +192,14 @@ were verified by reintroducing the bug and watching the suite go red.
 - **The Status panel is the contract.** Every layer is visibly working or
   visibly not. `absent` is `warn`, never `bad` — an unbuilt layer is a
   choice, and crying wolf about it teaches people to ignore the panel.
+  `degraded` was added for the same reason: county data that joined to no
+  geometry means the layer draws but something in it is lost, which is
+  neither `ready` nor `failed`.
+- **County keys with no geometry are counted, not skipped.** `buildCounties`
+  used to `continue` past them in silence; that is how 17 years of Oglala
+  Lakota and 64 of Bedford City disappeared. `fips.py` should keep the
+  count at zero, but fixing the crosswalk without keeping the detector
+  just hides the next boundary change instead.
 
 ## Known-good reference values
 
@@ -144,6 +211,124 @@ Useful for spotting regressions:
 - Colorado area: 103,859 sq mi computed vs 104,094 published (0.23% err)
 - Earth surface: 4πR² with R=3958.7613 mi ≈ 196.9M sq mi
 
+## Regions, and the averaging window
+
+Two independent noise controls. Small counties are unreadable: under
+10,000 people the median violent rate moves 45% year on year and the
+murder rate 100%, with 89% of years recording no murders at all.
+
+**Regions** (`scripts/build_regions.py`) group contiguous counties within
+one state up to a 100,000 population floor. `make regions` builds every
+variant; `make compare-regions` scores them.
+
+**`floor` is the variant that works** — confirmed on the map, not just in
+the table. 936 units, best compactness (0.51 against 0.45), and at
+matched granularity it beats the commuting-zone seed on every measure.
+Commuting zones tend to merge areas that were *already* large, which is
+how `cz-floor` flattered itself in the raw comparison: it looked steadier
+because it was coarser. All three stay built while the choice is open;
+`floor` is the default in `index.html` and the recommendation.
+
+**The volatility metric does not measure what the eye calls steadiness.**
+Scrolling years on counties still reads as random at a 3- or 5-year
+window, against a measured median |year-on-year| of 9% and 6%. Both
+observations are real, so the metric is answering a different question
+than the one being asked. A median says nothing about the tail, and the
+eye tracks *any* motion across 3,000 pillars rather than the typical one
+— so the thing to measure is probably the share of units moving more than
+some visible threshold, not the middle of the distribution. Deliberately
+unresolved; do not "fix" the map until the metric is right, because a
+change that improves the median may not change the impression at all.
+
+**The averaging window** (`web/src/smooth.ts`) sums offences and
+population over 1, 3 or 5 years and then divides. Measured, median
+|year-on-year change|:
+
+| layer | window | violent | murder |
+|---|---|---|---|
+| counties | 1 | 19% | 55% |
+| counties | 3 | 9% | 21% |
+| counties | 5 | 6% | 12% |
+| regions | 1 | 9% | 37% |
+| regions | 3 | 5% | 14% |
+| regions | 5 | 3% | 9% |
+
+**Time beats space for rare crimes.** Counties at a 3-year window (21%)
+are steadier than regions at one year (37%), and keep every county. Reach
+for the window first; regions are for reducing the number of things on
+screen as much as for noise.
+
+Things that will bite:
+
+- **Sum counts and population, then divide.** Averaging the yearly
+  *rates* weights a year of 40,000 people the same as one of 60,000, so a
+  growing unit reads as though its rate fell. The test fixture uses a
+  changing population precisely because an equal-population one cannot
+  tell the two apart.
+- **Murder has a floor no geography clears.** Rate error is
+  `1/sqrt(expected events)`; 100,000 people expect 6.5 murders, so ~39%.
+  Theory and measurement agree to two points. A variant that appears to
+  beat it has a bug.
+- **Membership is committed and frozen.** `build_regions.py` reuses
+  `data/regions/<variant>/members.json` unless `--redefine` is passed. A
+  boundary that moves between builds invalidates every trend the layer
+  exists to show.
+- **Regions never cross a state line** — reporting practice and the
+  calibration in `impute.py` are both per-state.
+- **Compactness is a tie-break, not a constraint.** Yukon-Koyukuk is
+  146,881 sq mi with 506 residents.
+- **The window changes the scale.** A different window is a different
+  distribution and therefore a different p99, so the scale cache is keyed
+  `(layer, window)`.
+- `scripts/adjacency.py` derives contiguity from shared vertices in
+  `geo-counties.json` — us-atlas descends from TopoJSON, so neighbours
+  carry identical coordinates. It also does the dissolve by cancelling
+  edges traversed from both sides. **Do not identify holes by winding
+  order**: us-atlas winds clockwise, and testing the sign of the area
+  gave zero outer rings and a perimeter of 0 for Vermont. `assemble()`
+  uses nesting depth instead.
+
+NCHS Health Service Areas were the intended third variant and are absent:
+they exist only in a 1991 PDF with no machine-readable crosswalk. USDA
+commuting zones stand in. See `scripts/fetch_sources.py`.
+
+## Place search
+
+`scripts/build_search.py` -> `data/search.json` (~200 KB gz), loaded at
+boot in `main.ts` because every layer needs it. `web/src/search.ts` is
+pure matching; `web/src/searchui.ts` owns the DOM and the side effects.
+
+The city gazetteer is free: every `local police department` row in Return
+A carries `agency_name` *and* `fips_state_county_code`, so the file is
+already a city-to-county crosswalk. No download.
+
+- **Store canonical FIPS.** Every code goes through `fips.canonical()` at
+  build time. NYPD's agency sits in 36061 and the map draws 36998; the
+  raw code would send every New York search to a county that is no longer
+  on the map.
+- **Return A names the agency, not the place**, and truncates at ~24
+  characters: "Suffolk Police Departmen", "Las Vegas Metro Pd". 724
+  entries carried a role tail. `strip_role()` removes them, and
+  `bare_key()` then drops city rows that duplicate a county row (679 of
+  them — "Los Angeles" was in the index twice).
+- **Rank by population before kind.** Ranking kind first put three small
+  Miami counties above Miami, Florida. States still win their own name
+  because they carry an effectively infinite population, so "Vermont" is
+  the state without a rule that also breaks Miami.
+- **Strip the generic tail from BOTH sides.** The index holds "Cook" and
+  people type "Cook County". Comparing a stripped index name against an
+  unstripped query matched nothing at all.
+- **The gap is real and must be described precisely.** A place policed by
+  a county sheriff has no agency row. The empty state says "no police
+  agency by that name", never "no such place" — different claims.
+- Selection is a **separate deck layer**, not a branch in
+  `getFillColor`. Three treatments already compose there (low-coverage
+  grey, estimated violet, fade); a fourth would either break them or be
+  lost under them.
+- A selection **survives a layer switch** by re-resolving the original
+  hit (`reselectForLayer`), so following Chicago from state to region to
+  county keeps it framed rather than dropping it.
+
 ## Sub-state data
 
 **Counties only.** There was an agency-point layer; it was removed because
@@ -153,18 +338,54 @@ centroids, and the CDE roster stacked 200 of 362 agencies on shared points
 but is no longer wired to anything.
 
 The national county layer comes from openICPSR 100707 (Return A,
-1960-2024) via `import_bulk.py`. Three column choices are load-bearing and
-were each verified against API-built data:
+1960-2024). `import_bulk.py` is now an orchestrator over four modules:
+`returna.py` (CSV -> columnar agency-year table + the UCR county
+crosswalk), `aggregate.py` (agency-years -> county-years),
+`impute.py` (estimates + calibration), `fips.py` (county identity).
+
+Column choices that are load-bearing, each verified against API-built
+data:
 
 - aggravated assault is `actual_assault_aggravated`; `actual_assault_total`
   bundles simple assault and reads ~10x too high
 - population is `population`, not `population_group` (a size band)
 - completeness is `number_of_months_reported`, not `..._missing`
+- **`population_N_county` is UCR's own sequential county number, not
+  FIPS.** Jefferson AL is UCR 37 and FIPS 073. The crosswalk is derived
+  from the file in `build_crosswalk` and never guessed. Only *secondary*
+  components of multi-county agencies go through it — a handful of rows
+  carry a `population_1_county` that contradicts their own FIPS, and
+  routing single-county agencies through the crosswalk would move them.
+- **`covered_by_ori`** names the agency that files on this one's behalf.
+  Unread, it cost ~5 million people's coverage in 2023 alone.
 
-`counties.json` uses a **compact encoding**: `[pop, cov, ...totals]` per
-county-year, ordered by `meta.crimeOrder`. The verbose object form would
-be 74 MB; this is 8.4 MB. `buildCounties` in the viewer reads both, since
-the per-state API path still emits objects.
+`counties.json` uses a **compact encoding**, now `compact-2`:
+`[pop, cov, imp, ...totals]` per county-year. **Read slot positions from
+`meta.record`, never from a constant** — `decodeCountyRec` hardcoded
+totals at index 2, so adding `imp` in front of them would have silently
+relabelled every offence in the file. It reads `compact-1`, `compact-2`
+and the verbose object form the per-state API path still emits.
+
+`fips.py` owns county identity and is imported by both the data build and
+`fetch_geometry.py`, so geometry and data cannot disagree about what a
+unit contains. It holds the vintage renames (Shannon SD -> Oglala Lakota,
+Bedford City -> Bedford County, four more), the merged units (New York
+City, Puerto Rico), and the territories too thin to draw. `make merge`
+re-applies merges to existing geometry without re-downloading it, and is
+idempotent.
+
+Run `make validate` after anything that touches the import path. Every
+check in it stands for a defect that shipped and looked fine on the map.
+
+Puerto Rico is one unit (`72999`), built from Return A and written into
+`states.json` by `build_states.py --territories-only` — a keyless step, so
+State and County mode read the same number from one code path. Its
+post-2020 figures are known-bad (466 violent offences for 3.2M in 2023):
+the agencies file twelve months of near-nothing for several consecutive
+years, so the collapse detector has no healthy baseline to compare
+against, and there is no published state total to calibrate to. Do not
+"fix" this by loosening `COLLAPSE_*` — that would start deleting genuine
+long-run declines everywhere else.
 
 ## Data caveats
 

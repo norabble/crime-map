@@ -1,6 +1,6 @@
 import type { MapboxOverlay } from '@deck.gl/mapbox';
 import type { Map as MapLibreMap } from 'maplibre-gl';
-import type { Feat, Store } from './types';
+import type { Feat, SearchHit, SearchIndex, Store } from './types';
 
 export interface AppState {
   crime: string;
@@ -16,11 +16,29 @@ export interface AppState {
      true:  the two channels swap */
   swap: boolean;
   palette: string;
-  geo: 'state' | 'county';
+  /** Active layer id from the registry in layers.ts — 'state', 'county'
+      or 'region:<variant>'. Not a union type: variants are discovered at
+      runtime from what the build produced. */
+  geo: string;
+  /** Years summed into each displayed value. 1 is off. */
+  window: number;
+  /** Gazetteer for place search; null when search.json was not built. */
+  searchIndex: SearchIndex | null;
+  /** The unit the user picked, as (layer, key). Outlined on the map and
+      re-resolved rather than cleared when the layer changes. */
+  selected: { layer: string; key: string } | null;
+  /** The hit `selected` came from, kept so a layer switch can re-resolve
+      the original place rather than the key it happened to produce. */
+  selectedHit: SearchHit | null;
+  /** county FIPS -> region key, per region variant, built when it loads. */
+  regionMembers: Map<string, Map<string, string>>;
   meta: Record<string, unknown>;
   hasCounties: boolean;
   countyData: Store | null;
   countyFeatures: Feat[];
+  /** County keys in the data with no matching geometry — data that will
+      never be drawn. Should be zero; surfaced so it cannot hide. */
+  countyUnmatched: number;
   /** GeoJSON features, each with .props (joined data). */
   features: Feat[];
   /* Unified store, both eras merged:
@@ -57,10 +75,16 @@ export const S: AppState = {
   swap: false,
   palette: 'greenred',
   geo: 'state',
+  window: 1,
+  searchIndex: null,
+  selected: null,
+  selectedHit: null,
+  regionMembers: new Map(),
   meta: {},
   hasCounties: false,
   countyData: null,
   countyFeatures: [],
+  countyUnmatched: 0,
   features: [],
   data: new Map(),
   years: [],

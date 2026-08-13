@@ -23,7 +23,22 @@ if (!existsSync(SRC)) {
   process.exit(1);
 }
 
-const files = readdirSync(SRC).filter((f) => f.endsWith('.json'));
+/* Every .json under data/, at any depth. The region layer writes
+   data/regions/<variant>/{regions,geo,members}.json, and a flat readdir
+   silently shipped a build with no regions in it — the viewer then
+   reported them "not built", which was true of the public dir and false
+   of the repo. */
+function jsonFiles(dir, prefix = '') {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? join(prefix, entry.name) : entry.name;
+    if (entry.isDirectory()) out.push(...jsonFiles(join(dir, entry.name), rel));
+    else if (entry.name.endsWith('.json')) out.push(rel);
+  }
+  return out;
+}
+
+const files = jsonFiles(SRC);
 if (files.length === 0) {
   console.error('\n  data/ has no .json files. Build them first:\n\n    make data\n');
   process.exit(1);
@@ -36,7 +51,9 @@ mkdirSync(DEST, { recursive: true });
 
 let total = 0;
 for (const f of files) {
-  cpSync(join(SRC, f), join(DEST, f));
+  const dest = join(DEST, f);
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(join(SRC, f), dest);
   total += statSync(join(SRC, f)).size;
 }
 

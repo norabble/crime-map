@@ -182,8 +182,52 @@
   #splashMsg{font-size:12px;color:var(--muted)}
   #splashErr{max-width:460px;text-align:center;font-size:12px;line-height:1.6;color:var(--warn);display:none}
 
+  /* ── place search ────────────────────────────────────────────────
+     Sits at the head of the rankings panel: the same list, reachable two
+     ways. Typing replaces the leaderboard with results and clearing puts
+     it back, so the panel never shows both and never goes empty. */
+  .srBox{display:flex;align-items:center;gap:7px;background:#161c2b;
+    border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:10px}
+  .srBox:focus-within{border-color:var(--accent2)}
+  .srIcon{width:13px;height:13px;color:var(--muted);flex:none}
+  .srBox:focus-within .srIcon{color:var(--accent2)}
+  #srInput{flex:1;min-width:0;background:none;border:none;color:var(--text);
+    font-family:inherit;font-size:11.5px;padding:1px 0}
+  #srInput:focus{outline:none}
+  #srInput::placeholder{color:var(--muted)}
+  /* The browser's own search affordances are the wrong size and colour here. */
+  #srInput::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+  #srClear{display:none;background:none;border:none;color:var(--muted);cursor:pointer;
+    font-size:15px;line-height:1;padding:0 1px;flex:none}
+  #srClear:hover{color:var(--text)}
+  #srClear.on{display:block}
+
+  .sr{padding:6px 0 7px;border-bottom:1px solid rgba(36,44,64,.7)}
+  .sr:last-child{border-bottom:none}
+  .srHead{display:flex;align-items:baseline;gap:6px;font-size:11.5px;margin-bottom:4px}
+  .srHead .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srHead .ab{color:var(--muted);font-size:9.5px;letter-spacing:.6px;flex:none}
+  .srHead .pop{color:var(--muted);font-size:9.5px;font-variant-numeric:tabular-nums;flex:none}
+  /* The chain IS the answer to "what will this do": it names the unit this
+     place becomes in each geography, with the active one lit. */
+  .srChain{display:flex;flex-wrap:wrap;gap:4px}
+  .srStep{background:#141a29;border:1px solid var(--border);color:var(--muted);
+    border-radius:5px;padding:2.5px 6px;font-family:inherit;font-size:10px;
+    cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srStep:hover:not(:disabled){border-color:#3d4a66;color:var(--text)}
+  .srStep.on{background:var(--accent2);border-color:var(--accent2);color:#04121c;font-weight:600}
+  .srStep:disabled{opacity:.4;cursor:default}
+  #srList{display:none}
+  #srNote{display:none;margin-bottom:2px}
+  .searching #srList{display:block}
+  .searching #srNote:not(:empty){display:block}
+  .searching #rkTitle,.searching #rkList{display:none}
+
   @media (max-width:900px){
-    #ranking{display:none}
+    /* Search stays; the leaderboard goes. Finding a place beats ranking
+       twelve when there is no room for both. */
+    #ranking{width:238px;max-height:none;padding:12px}
+    #rkTitle,#rkList{display:none}
     #controls{width:270px}
     #legend{width:270px}
   }
@@ -201,15 +245,45 @@
      Surface colour = population density. FBI Uniform Crime Reports.</p>
 
   <div class="grp">
+    <h2>Averaging window</h2>
+    <div class="seg" id="winSeg">
+      <button data-window="1" class="on">1 year</button>
+      <button data-window="3">3 years</button>
+      <button data-window="5">5 years</button>
+    </div>
+    <div class="note">Sums offences and population across neighbouring years
+      before dividing, which is not the same as averaging the rates. Rare
+      crimes cannot be steadied by geography alone — a region of 100,000
+      people expects about 6.5 murders a year, so its murder rate carries
+      roughly 39% error however the boundary is drawn. Three years is three
+      times the events. The window narrows at each end of the series.</div>
+  </div>
+
+  <div class="grp">
     <h2>Geographic area</h2>
     <div class="seg" id="geoSeg">
       <button data-geo="state" class="on">State</button>
+      <button data-geo="region:floor" title="Contiguous groups of low-population counties, fetched on first use">Region</button>
       <button data-geo="county" title="Loads the county layer (4.3 MB) on first use">County</button>
       <button data-geo="zip" disabled title="ZIP-level crime data does not exist nationally — see Data notes">ZIP code</button>
       <button data-geo="tract" disabled title="Census-tract crime data does not exist nationally — see Data notes">Census tract</button>
     </div>
-    <div class="note">County data is fetched on first click — it is larger than
-      everything else combined. If it fails, <em>Status</em> below says so and
+    <!-- Temporary: three ways of drawing the region layer are built so they
+         can be compared on the map. Once one is chosen the others go, and
+         this selector goes with them. -->
+    <label class="row" id="variantRow" style="display:none">Region method
+      <select id="variantSel">
+        <option value="floor">floor — merge to 100k</option>
+        <option value="cz">commuting zones — as published</option>
+        <option value="cz-floor">commuting zones + floor</option>
+      </select>
+    </label>
+    <div class="note">A region is a group of neighbouring counties in one
+      state, merged until it holds about 100,000 people. Small counties swing
+      wildly year to year — under 10,000 residents the median violent rate
+      moves 45% a year and the murder rate 100% — and grouping them makes a
+      trend visible. Large counties are left alone. Region and county data are
+      fetched on first click; if a fetch fails, <em>Status</em> says so and
       clicking again retries. ZIP and census tract have no nationwide source at
       all; see <em>Data notes</em>.</div>
   </div>
@@ -322,6 +396,17 @@
 
 <!-- ───────────── RANKING ───────────── -->
 <div class="panel" id="ranking">
+  <div class="srBox">
+    <svg class="srIcon" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M10.4 10.4 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <input id="srInput" type="search" placeholder="Find a place" autocomplete="off"
+           spellcheck="false" aria-label="Find a state, county or city">
+    <button id="srClear" type="button" title="Clear" aria-label="Clear search">×</button>
+  </div>
+  <div id="srList"></div>
+  <div id="srNote" class="note"></div>
   <h2 id="rkTitle">Highest rates</h2>
   <div id="rkList"></div>
 </div>

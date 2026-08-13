@@ -52,9 +52,14 @@ export async function ensureCounties(): Promise<boolean> {
       setStatus('counties', { kind: 'absent', detail: 'no counties matched geometry' });
       return false;
     }
+    // Counties that loaded but can never be drawn are a build defect, not a
+    // load failure: the layer works, so it stays ready, but the panel says
+    // so rather than letting the discrepancy pass unremarked.
+    const detail = S.countyFeatures.length.toLocaleString('en-US') + ' counties' +
+      (S.countyUnmatched ? ' — ' + S.countyUnmatched + ' unmapped' : '');
     setStatus('counties', {
-      kind: 'ready',
-      detail: S.countyFeatures.length.toLocaleString('en-US') + ' counties',
+      kind: S.countyUnmatched ? 'degraded' : 'ready',
+      detail,
     });
     return true;
   })();

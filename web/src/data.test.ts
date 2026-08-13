@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SRS_LAST } from './config';
-import { decodeCountyRec, recomputeScales } from './data';
+import {
+  decodeCountyRec, invalidateScales, percentile, recomputeScales,
+} from './data';
+import { clearLayers, registerLayer } from './layers';
 import { S } from './state';
 import type { Feat, Rec, YearMap } from './types';
 
@@ -68,6 +71,59 @@ describe('decodeCountyRec: compact-1', () => {
   });
 });
 
+/* ─────────────────────────────────────────────────────────────────
+   compact-2, and why offsets come from meta.record
+
+   compact-2 inserts `imp` between `cov` and the totals. The old decoder
+   hardcoded totals at index 2, so reading a compact-2 file with it would
+   have labelled `imp` as the first offence and shifted every other one —
+   silently, with no error and plausible-looking numbers.
+   ───────────────────────────────────────────────────────────────── */
+const REC2 = ['pop', 'cov', 'imp'].concat(ORDER);
+
+describe('decodeCountyRec: compact-2', () => {
+  it('reads imp and offsets the totals past it', () => {
+    const r = decodeCountyRec([50000, 91.5, 0.25, 100, 2, 400], 2023, true, ORDER, REC2);
+    expect(r.pop).toBe(50000);
+    expect(r.cov).toBe(91.5);
+    expect(r.imp).toBe(0.25);
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+  });
+
+  it('still decodes compact-1 when meta.record says so', () => {
+    const r = decodeCountyRec([50000, 91.5, 100, 2, 400], 2023, true, ORDER,
+      ['pop', 'cov'].concat(ORDER));
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+    expect(r.imp).toBeNull();
+  });
+
+  it('assumes compact-1 when meta.record is absent, as old files are', () => {
+    const r = decodeCountyRec([50000, 91.5, 100, 2, 400], 2023, true, ORDER);
+    expect(r.totals).toEqual({ violent: 100, murder: 2, burglary: 400 });
+    expect(r.imp).toBeNull();
+  });
+
+  it('follows meta.record even when the slots are reordered', () => {
+    // The point of reading offsets rather than assuming them: this layout
+    // is not one the builder emits, and it still decodes correctly.
+    const r = decodeCountyRec([0.5, 50000, 91.5, 100, 2, 400], 2023, true, ORDER,
+      ['imp', 'pop', 'cov'].concat(ORDER));
+    expect(r.imp).toBe(0.5);
+    expect(r.pop).toBe(50000);
+    expect(r.cov).toBe(91.5);
+    expect(r.totals.violent).toBe(100);
+  });
+
+  it('distinguishes a fully-estimated county-year from an absent one', () => {
+    // cov 0 with imp 1 is a real county nobody filed for. It must decode
+    // as a drawable figure, not as missing data.
+    const r = decodeCountyRec([50000, 0, 1, 100, 2, 400], 2023, true, ORDER, REC2);
+    expect(r.cov).toBe(0);
+    expect(r.imp).toBe(1);
+    expect(r.rates.violent).toBeCloseTo(200, 9);
+  });
+});
+
 describe('decodeCountyRec: verbose object form', () => {
   it('passes through the per-state API build unchanged', () => {
     const r = decodeCountyRec(
@@ -104,7 +160,7 @@ function feat(name: string, areaSqMi: number): Feat {
 }
 
 function rec(pop: number, rates: Record<string, number>): Rec {
-  return { pop, cov: null, src: 'SRS', rates, totals: {} };
+  return { pop, cov: null, imp: null, src: 'SRS', rates, totals: {} };
 }
 
 function years(entries: [number, Rec][]): YearMap {
@@ -127,25 +183,122 @@ beforeEach(() => {
   ]);
   S.countyData = null;
   S.countyFeatures = [];
+  S.geo = 'state';
+  // The real app registers this in buildData(). Registering accessors
+  // rather than the arrays themselves is what lets the fixtures above
+  // reassign S.features and S.data and still be seen.
+  clearLayers();
+  registerLayer({
+    id: 'state', label: 'State', noun: 'state',
+    features: () => S.features, store: () => S.data, keyOf: (f) => f.props.name,
+  });
+  // Scales are cached per layer, so every test must start from a cold
+  // cache or it inherits the previous test's fixture.
+  invalidateScales();
+});
+
+describe('percentile', () => {
+  const hundred = Array.from({ length: 100 }, (_, i) => i + 1); // 1..100
+
+  it('is insensitive to how extreme the extreme value is', () => {
+    // The whole point. A max-based scale moves with the worst datum; a
+    // p99 barely notices it.
+    const a = percentile(hundred.concat([1000]), 0.99);
+    const b = percentile(hundred.concat([1000000]), 0.99);
+    expect(a).toBeCloseTo(b, 6);
+  });
+
+  it('interpolates between neighbours rather than snapping to one', () => {
+    expect(percentile([0, 10], 0.5)).toBe(5);
+  });
+
+  it('returns the endpoints at 0 and 1', () => {
+    expect(percentile(hundred, 0)).toBe(1);
+    expect(percentile(hundred, 1)).toBe(100);
+  });
+
+  it('does not reorder the caller\'s array', () => {
+    // The samples array is reused across crime types; sorting in place
+    // would corrupt every subsequent read of it.
+    const v = [5, 1, 3];
+    percentile(v, 0.5);
+    expect(v).toEqual([5, 1, 3]);
+  });
+
+  it('survives empty and single-element input', () => {
+    expect(percentile([], 0.99)).toBe(0);
+    expect(percentile([42], 0.99)).toBe(42);
+  });
 });
 
 describe('recomputeScales', () => {
-  it('takes the crime maximum across every year, not the current one', () => {
+  it('takes the crime reference across every year, not the current one', () => {
     recomputeScales();
-    // 900 is Alpha in 1990. A per-year domain would give 300 for 2020.
-    expect(S.crimeMax.violent).toBe(900);
+    // Alpha 1990 is 900; 2020 alone would top out at 300. The reference is
+    // a percentile now rather than the maximum, so this pins the invariant
+    // that matters — all years, not this one — without pinning the
+    // interpolation arithmetic.
+    expect(S.crimeMax.violent).toBeGreaterThan(300);
+    expect(S.crimeMax.violent).toBeLessThanOrEqual(900);
   });
 
   it('takes the density range across every unit and every year', () => {
     recomputeScales();
     // Alpha 1990: 1000/100 = 10 (min). Beta 2020: 60000/1000 = 60 (max).
+    // Density keeps its true min/max — log10 already absorbs its tail.
     expect(S.densMin).toBe(10);
     expect(S.densMax).toBe(60);
   });
 
-  it('takes absMax across all crime types at once', () => {
+  it('takes absMax as the largest per-crime reference, not a pooled one', () => {
     recomputeScales();
-    expect(S.absMax).toBe(900);
+    // Pooling every crime's rates together would be dominated by whichever
+    // offence is most common and would drag the absolute scale below the
+    // violent reference, breaking cross-crime comparison.
+    expect(S.absMax).toBe(S.crimeMax.violent);
+    expect(S.absMax).toBeGreaterThan(S.crimeMax.murder);
+  });
+
+  it('lets one absurd outlier no longer set the whole scale', () => {
+    // The reason this changed. A single county-year of 500,000 per 100k
+    // used to be the ceiling, which put every real unit under 1% of full
+    // height and made the fade slider hide the entire map by its first
+    // third. Against p99 the outlier is clamped instead of governing.
+    //
+    // Needs a realistic number of units to demonstrate: with a handful of
+    // samples a 99th percentile interpolates to nearly the maximum, which
+    // is correct — a percentile only buys headroom when there is data to
+    // spare. The real layers have 3,380 state-years and 200,000
+    // county-years.
+    S.features = [];
+    S.data = new Map();
+    for (let i = 0; i < 200; i++) {
+      S.features.push(feat('U' + i, 100));
+      S.data.set('U' + i, years([[1990, rec(1000, { violent: 100 + i })]]));
+    }
+    S.features.push(feat('Freak', 100));
+    S.data.set('Freak', years([[1990, rec(1000, { violent: 500000 })]]));
+
+    recomputeScales();
+    expect(S.crimeMax.violent).toBeLessThan(1000);
+    // And the freak is still drawn — clamped to full height, not dropped.
+    expect(500000 / S.crimeMax.violent).toBeGreaterThan(1);
+  });
+
+  it('caches per layer, and invalidating recomputes', () => {
+    recomputeScales();
+    const first = S.crimeMax.violent;
+
+    // Same layer, changed data, no invalidation: the cache is meant to
+    // hold, because in the real app a layer's data cannot change without
+    // being rebuilt.
+    S.data.get('Alpha')!.set(1975, rec(1000, { violent: 900000 }));
+    recomputeScales();
+    expect(S.crimeMax.violent).toBe(first);
+
+    invalidateScales();
+    recomputeScales();
+    expect(S.crimeMax.violent).toBeGreaterThan(first);
   });
 
   it('gives an unseen crime type a domain of 1 rather than 0', () => {

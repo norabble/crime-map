@@ -18,7 +18,46 @@ export const SRS_LAST = 2019;      // last year of Summary Reporting System data
 export const NIBRS_FIRST = 2020;   // first year pulled from the CDE API
 export const COVERAGE_MIN = 80;    // below this %, a unit-year is flagged unreliable
 
+/* Above this share of estimated offences, a unit-year is marked as an
+   estimate rather than a measurement.
+
+   This is a SEPARATE reading from coverage and the two do not imply each
+   other. Coverage says how much of the population filed; `imp` says how
+   much of the number on screen nobody filed at all. A county with no
+   coverage and no estimate is absent; one with no coverage and a full set
+   of estimates is drawn, at full height, and must not be mistaken for a
+   measured one. Half is the threshold because below it the filed majority
+   still carries the figure. */
+export const ESTIMATED_MIN = 0.5;
+
+/* Estimated unit-years are hatched toward this violet rather than being
+   greyed: grey is already spoken for by low coverage, and the two land on
+   the same unit constantly — a county nobody filed for has cov 0 AND imp 1.
+   Distinct hue, so the two readings stay separable. */
+export const ESTIMATED_RGB: RGB = [138, 120, 214];
+export const ESTIMATED_MIX = 0.5;
+
 export const MAX_HEIGHT_M = 420000; // metres at exaggeration 1.0
+
+/* Pillar height is scaled to this percentile of the rate distribution,
+   not to the maximum.
+
+   Rates are heavy-tailed and the tail is mostly damage: a county of 38
+   people recording 34 offences is a real figure and a useless ceiling.
+   Against the true max, EVERY county-year of every crime type sat below
+   30% of full height — so the fade slider hid the entire map by its first
+   third, and the pillars carried almost no visible variation.
+
+   At p99 the median violent county-year rises from 1.1% of full height to
+   13.7%. The top 1% clamp at full height (normalizedRate already does
+   Math.min(1, …)), which is the intended trade: the very tallest pillars
+   stop being distinguishable from each other so that the other 99% become
+   distinguishable at all.
+
+   Height stays LINEAR in the rate below the cap, so a pillar twice as
+   tall still means twice the rate. Density keeps its log scale — it spans
+   four orders of magnitude and log10 already absorbs its tail. */
+export const PILLAR_PERCENTILE = 0.99;
 
 /* Faded pillars sink toward this dark blue-grey and drop to this alpha.
    Deliberately one notch fainter than the low-coverage treatment (which
@@ -26,6 +65,11 @@ export const MAX_HEIGHT_M = 420000; // metres at exaggeration 1.0
    when they land on the same unit. */
 export const FADE_RGB: RGB = [46, 54, 72];
 export const FADE_ALPHA = 48;
+
+/* The search selection outline. `--accent2` from the stylesheet, which
+   already means "you chose this" on every segmented button, so the map and
+   the panels agree without a second convention to learn. */
+export const SELECTION_RGBA: [number, number, number, number] = [74, 168, 216, 235];
 
 /* ---------- density colour ramps ---------------------------------- */
 export const PALETTES: Record<string, Palette> = {

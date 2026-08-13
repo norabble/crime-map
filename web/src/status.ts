@@ -9,12 +9,16 @@
    The model and its labels are pure so they can be tested; only render()
    touches the DOM. */
 
-export type LayerKey = 'states' | 'counties' | 'basemap';
+export type LayerKey = 'states' | 'regions' | 'counties' | 'basemap';
 
 export type LayerState =
   | { kind: 'pending'; detail?: string }
   | { kind: 'loading'; detail?: string }
   | { kind: 'ready'; detail?: string }
+  // Loaded and usable, but with a defect worth naming — county data that
+  // joined to no geometry, for instance. Distinct from 'failed', which
+  // means there is nothing to draw at all.
+  | { kind: 'degraded'; detail?: string }
   | { kind: 'absent'; detail?: string }
   | { kind: 'failed'; detail?: string };
 
@@ -24,6 +28,7 @@ export type StatusModel = Record<LayerKey, LayerState>;
 
 export const LAYER_LABELS: Record<LayerKey, string> = {
   states: 'States',
+  regions: 'Regions',
   counties: 'Counties',
   basemap: 'Basemap',
 };
@@ -31,6 +36,7 @@ export const LAYER_LABELS: Record<LayerKey, string> = {
 export function initialStatus(): StatusModel {
   return {
     states: { kind: 'pending' },
+    regions: { kind: 'pending' },
     counties: { kind: 'pending' },
     basemap: { kind: 'pending' },
   };
@@ -42,6 +48,8 @@ export function describeState(s: LayerState): { text: string; tone: Tone } {
     case 'pending': return { text: s.detail ?? 'waiting', tone: 'idle' };
     case 'loading': return { text: s.detail ?? 'loading…', tone: 'idle' };
     case 'ready': return { text: s.detail ?? 'ready', tone: 'ok' };
+    // Warn, not bad: the layer draws. Something in it does not.
+    case 'degraded': return { text: s.detail ?? 'degraded', tone: 'warn' };
     // Absent is not a fault. A build without counties.json is a legitimate
     // build, so it reads as information rather than as an error.
     case 'absent': return { text: s.detail ?? 'not built', tone: 'warn' };
