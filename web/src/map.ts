@@ -1,5 +1,11 @@
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+// maplibre >= 6 finds its worker as a sibling of its own module, which
+// stops being true once Vite bundles it: the build emitted no worker at all
+// and every vector tile would have failed to parse. ?worker&url makes Vite
+// emit it as a self-contained chunk - plain ?url copies the file verbatim
+// without the maplibre-gl-shared.mjs it imports.
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { BASEMAP_STYLE, BASEMAP_WATCHDOG_MS } from './config';
 import { $ } from './dom';
 import { render } from './render';
@@ -11,6 +17,7 @@ import { once } from './util';
    separate so every other module stays testable in plain Node - no jsdom,
    no canvas stub. */
 export function initMap(): void {
+  maplibregl.setWorkerUrl(workerUrl);
   S.map = new maplibregl.Map({
     container: 'map',
     style: BASEMAP_STYLE,
